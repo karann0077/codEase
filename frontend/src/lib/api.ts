@@ -29,6 +29,9 @@ export const ingestFiles = (files: { filename: string; content: string }[], sess
 export const explainCode = (code: string, language: string) =>
   api.post('/docs/explain', { code, language });
 
+export const explainCodeCommented = (code: string, language: string) =>
+  api.post('/docs/commented-code', { code, language });
+
 export const fetchFileContent = (sessionId: string, filepath: string) =>
   api.get('/fetch-file', { params: { session_id: sessionId, filepath } });
 
