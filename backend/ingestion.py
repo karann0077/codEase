@@ -287,6 +287,7 @@ async def index_github_repo(
 
     return {
         "repo":           f"{owner}/{repo_name}",
+        "branch":         default_branch,
         "indexed_files":  indexed_files,
         "indexed_chunks": indexed_chunks,
         "skipped_files":  skipped,
