@@ -422,7 +422,21 @@ function ChatPage({ sessionId, indexedCount }: { sessionId: string; indexedCount
           <div key={i} className={`msg ${m.role}`}>
             <div className="msg-av">{m.role === 'user' ? 'U' : 'AI'}</div>
             <div className="msg-bubble">
-              {m.role === 'assistant' ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown> : <p>{m.content}</p>}
+              {m.role === 'assistant' ? (
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    code({ node, className, children, ...props }: any) {
+                      const lang = (className || '').replace('language-', '');
+                      const code = String(children).replace(/\n$/, '');
+                      if (lang === 'mermaid') {
+                        return <MermaidDiagram chart={code} />;
+                      }
+                      return <code className={className} {...props}>{children}</code>;
+                    }
+                  }}
+                >{m.content}</ReactMarkdown>
+              ) : <p>{m.content}</p>}
             </div>
           </div>
         ))}
