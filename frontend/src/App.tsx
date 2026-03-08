@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import mermaid from 'mermaid';
 import {
-  createSession, ingestGithub, ingestFiles, explainCode, fetchFileContent,
+  createSession, ingestGithub, ingestFiles, explainCode, explainCodeCommented, fetchFileContent,
   debugAnalyze, multimodalDebug, decodeStacktrace, sendChat, checkHealth,
 } from './lib/api';
 import type { ExplainResult, ChatMessage, Tab, DebugMode, IndexedFile } from './types';
@@ -65,7 +65,7 @@ function IngestionPanel({
   sessionId, onIndexed,
 }: {
   sessionId: string;
-  onIndexed: (n: number, files: IndexedFile[]) => void;
+  onIndexed: (n: number, files: IndexedFile[], repoInfo?: {owner:string,repo:string,branch:string}) => void;
 }) {
   const [tab, setTab] = useState<'gh' | 'up'>('gh');
   const [url, setUrl] = useState('');
@@ -80,7 +80,11 @@ function IngestionPanel({
     try {
       const r = await ingestGithub(url.trim(), sessionId, token || undefined);
       setRes(r.data);
-      onIndexed(r.data.indexed_files, r.data.files || []);
+      onIndexed(r.data.indexed_files, r.data.files || [], {
+        owner: url.trim().replace(/\/+$/, '').split('/').slice(-2)[0],
+        repo:  url.trim().replace(/\/+$/, '').split('/').slice(-1)[0],
+        branch: r.data.branch || 'main',
+      });
     } catch (e: any) { setErr(e.response?.data?.detail || e.message); }
     finally { setLoading(false); }
   };
@@ -152,13 +156,15 @@ function FolderTree({ files, selectedFile, onSelect }: {
 }) {
   const [openFolders, setOpenFolders] = useState<Set<string>>(new Set(['root']));
 
-  // Deduplicate files by filepath, keep first occurrence
+  // Deduplicate files by true filepath (strip " chunk X/Y" suffix from filename)
   const seen = new Set<string>();
-  const uniqueFiles = files.filter(f => {
-    if (seen.has(f.filepath)) return false;
-    seen.add(f.filepath);
-    return true;
-  });
+  const uniqueFiles = files
+    .map(f => ({ ...f, filename: f.filename.replace(/\s+chunk\s+\d+\/\d+$/i, '').trim() }))
+    .filter(f => {
+      if (seen.has(f.filepath)) return false;
+      seen.add(f.filepath);
+      return true;
+    });
 
   // Group files into folder tree
   const tree: Record<string, IndexedFile[]> = {};
@@ -216,10 +222,11 @@ function FolderTree({ files, selectedFile, onSelect }: {
 }
 
 // ── Docs Page — documents the INDEXED REPO ─────────────────────────────────────
-function DocsPage({ sessionId, indexedFiles, indexedCount }: {
+function DocsPage({ sessionId, indexedFiles, indexedCount, repoInfo: repoProp }: {
   sessionId: string;
   indexedFiles: IndexedFile[];
   indexedCount: number;
+  repoInfo: {owner:string,repo:string,branch:string} | null;
 }) {
   const [selectedFile, setSelectedFile] = useState<IndexedFile | null>(null);
   const [customCode, setCustomCode] = useState('');
@@ -228,26 +235,56 @@ function DocsPage({ sessionId, indexedFiles, indexedCount }: {
   const [result, setResult] = useState<ExplainResult | null>(null);
   const [err, setErr] = useState('');
   const [view, setView] = useState<'overview' | 'functions' | 'flowchart' | 'code'>('overview');
+  const [commentedCode, setCommentedCode] = useState<string>('');
+  const [commentedLoading, setCommentedLoading] = useState(false);
+  const [lastCodeForComment, setLastCodeForComment] = useState('');
   const [mode, setMode] = useState<'repo' | 'custom'>('repo');
+  useEffect(() => { if (repoProp) setRepoInfo(repoProp); }, [repoProp]);
+  const [repoInfo, setRepoInfo] = useState<{owner:string,repo:string,branch:string} | null>(repoProp);
+  const [currentCode, setCurrentCode] = useState('');
+  const [currentLang, setCurrentLang] = useState('python');
 
   const analyzeFile = async (file: IndexedFile) => {
     setSelectedFile(file);
     setLoading(true); setErr(''); setResult(null);
     try {
       let code = '';
-      // Try to fetch real file content from GitHub
-      try {
-        const fileRes = await fetchFileContent(sessionId, file.filepath);
-        code = fileRes.data.content;
-      } catch {
-        // Fallback: use filepath as context hint (uploaded files)
-        code = `# File: ${file.filepath}\n# Language: ${file.language}\n# (Content fetched from indexed codebase)`;
+      // Try to fetch real file from GitHub raw URL directly
+      if (repoInfo) {
+        const rawUrl = `https://raw.githubusercontent.com/${repoInfo.owner}/${repoInfo.repo}/${repoInfo.branch}/${file.filepath}`;
+        try {
+          const res = await fetch(rawUrl);
+          if (res.ok) code = await res.text();
+        } catch { /* ignore, fall through */ }
+      }
+      // Fallback: try backend fetch-file endpoint
+      if (!code) {
+        try {
+          const fileRes = await fetchFileContent(sessionId, file.filepath);
+          code = fileRes.data.content;
+        } catch { /* ignore */ }
+      }
+      if (!code) {
+        setErr('Could not fetch file content. Make sure the repo is public and re-index it.');
+        setLoading(false);
+        return;
       }
       const r = await explainCode(code, file.language);
       if (r.data.error) setErr(r.data.error);
-      else { setResult(r.data); setView('overview'); }
+      else { setResult(r.data); setView('overview'); setCurrentCode(code); setCurrentLang(file.language); setCommentedCode(''); }
     } catch (e: any) { setErr(e.response?.data?.detail || e.message || 'Error'); }
     finally { setLoading(false); }
+  };
+
+  const loadCommentedCode = async (code: string, language: string) => {
+    if (commentedCode && lastCodeForComment === code) return; // already loaded
+    setCommentedLoading(true);
+    try {
+      const r = await explainCodeCommented(code, language);
+      setCommentedCode(r.data.commented_code || '');
+      setLastCodeForComment(code);
+    } catch { setCommentedCode('// Error loading commented code'); }
+    finally { setCommentedLoading(false); }
   };
 
   const analyzeCustom = async () => {
@@ -256,7 +293,7 @@ function DocsPage({ sessionId, indexedFiles, indexedCount }: {
     try {
       const r = await explainCode(customCode, lang);
       if (r.data.error) setErr(r.data.error);
-      else { setResult(r.data); setView('overview'); }
+      else { setResult(r.data); setView('overview'); setCurrentCode(customCode); setCurrentLang(lang); setCommentedCode(''); }
     } catch (e: any) { setErr(e.response?.data?.detail || e.message || 'Error'); }
     finally { setLoading(false); }
   };
@@ -341,7 +378,7 @@ function DocsPage({ sessionId, indexedFiles, indexedCount }: {
             <div className="rtabs">
               <button className={`rtab ${view === 'overview' ? 'active' : ''}`} onClick={() => setView('overview')}><FileText size={12} /> Overview</button>
               <button className={`rtab ${view === 'functions' ? 'active' : ''}`} onClick={() => setView('functions')}><Code2 size={12} /> Functions ({result.functions?.length || 0})</button>
-              <button className={`rtab ${view === 'code' ? 'active' : ''}`} onClick={() => setView('code')}><Terminal size={12} /> Commented Code</button>
+              <button className={`rtab ${view === 'code' ? 'active' : ''}`} onClick={() => { setView('code'); loadCommentedCode(currentCode, currentLang); }}><Terminal size={12} /> Commented Code</button>
               <button className={`rtab ${view === 'flowchart' ? 'active' : ''}`} onClick={() => setView('flowchart')}><GitBranch size={12} /> Flowchart</button>
             </div>
             <div className="rcontent">
@@ -413,16 +450,18 @@ function DocsPage({ sessionId, indexedFiles, indexedCount }: {
 
               {view === 'code' && (
                 <>
-                  {(result as any).commented_code ? (
+                  {commentedLoading && <div className="loading"><Spinner /><p>Generating commented code...</p></div>}
+                  {!commentedLoading && commentedCode && (
                     <div className="commented-code-wrap">
                       <div className="flow-hdr">
                         <span>📝 Commented Source Code</span>
-                        <CopyButton text={(result as any).commented_code} />
+                        <CopyButton text={commentedCode} />
                       </div>
-                      <pre className="commented-code">{(result as any).commented_code}</pre>
+                      <pre className="commented-code">{commentedCode}</pre>
                     </div>
-                  ) : (
-                    <div className="muted-c">No commented code generated.</div>
+                  )}
+                  {!commentedLoading && !commentedCode && (
+                    <div className="muted-c" style={{padding:20}}>Click the tab to generate commented code.</div>
                   )}
                 </>
               )}
@@ -736,6 +775,7 @@ export default function App() {
   const [sessionId, setSessionId] = useState('');
   const [indexedCount, setIndexedCount] = useState(0);
   const [indexedFiles, setIndexedFiles] = useState<IndexedFile[]>([]);
+  const [lastRepoInfo, setLastRepoInfo] = useState<{owner:string,repo:string,branch:string} | null>(null);
   const [apiOk, setApiOk] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -743,10 +783,10 @@ export default function App() {
     checkHealth().then(() => setApiOk(true)).catch(() => setApiOk(false));
   }, []);
 
-  const handleIndexed = (n: number, files: IndexedFile[]) => {
+  const handleIndexed = (n: number, files: IndexedFile[], repoInfo?: {owner:string,repo:string,branch:string}) => {
     setIndexedCount(p => p + n);
+    if (repoInfo) setLastRepoInfo(repoInfo);
     setIndexedFiles(prev => {
-      // Deduplicate by filepath
       const existing = new Set(prev.map(f => f.filepath));
       const newFiles = files.filter(f => !existing.has(f.filepath));
       return [...prev, ...newFiles];
@@ -780,7 +820,7 @@ export default function App() {
           )}
         </div>
         <div className="main-body">
-          {tab === 'docs' && <DocsPage sessionId={sessionId} indexedFiles={indexedFiles} indexedCount={indexedCount} />}
+          {tab === 'docs' && <DocsPage sessionId={sessionId} indexedFiles={indexedFiles} indexedCount={indexedCount} repoInfo={lastRepoInfo} />}
           {tab === 'debug' && <DebugPage />}
           {tab === 'chat' && <ChatPage sessionId={sessionId} indexedCount={indexedCount} />}
         </div>
