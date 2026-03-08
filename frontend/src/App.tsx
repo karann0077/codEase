@@ -6,14 +6,14 @@ import {
   Github, Upload, MessageSquare, Bug, FileText, ChevronRight,
   Zap, Copy, Check, AlertTriangle, CheckCircle2,
   XCircle, Loader2, Image, Code2, GitBranch, Layers, Search,
-  Terminal, Sparkles, ChevronDown, ChevronUp,
+  Terminal, Sparkles, ChevronDown, ChevronUp, FolderOpen, FileCode2,
 } from 'lucide-react';
 import mermaid from 'mermaid';
 import {
   createSession, ingestGithub, ingestFiles, explainCode,
   debugAnalyze, multimodalDebug, decodeStacktrace, sendChat, checkHealth,
 } from './lib/api';
-import type { ExplainResult, ChatMessage, Tab, DebugMode } from './types';
+import type { ExplainResult, ChatMessage, Tab, DebugMode, IndexedFile } from './types';
 import './index.css';
 
 mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
@@ -39,7 +39,7 @@ function MermaidDiagram({ chart }: { chart: string }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!ref.current || !chart) return;
-    const id = `mermaid-${Date.now()}`;
+    const id = `mermaid-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     mermaid.render(id, chart)
       .then(({ svg }) => { if (ref.current) ref.current.innerHTML = svg; })
       .catch(() => { if (ref.current) ref.current.innerHTML = `<pre style="color:#aaa;font-size:12px;padding:12px">${chart}</pre>`; });
@@ -60,8 +60,13 @@ function Collapsible({ title, children, defaultOpen = false, icon }: any) {
   );
 }
 
-// ── Ingestion Panel ────────────────────────────────────────────────────────────
-function IngestionPanel({ sessionId, onIndexed }: { sessionId: string; onIndexed: (n: number) => void }) {
+// ── Ingestion Panel ─────────────────────────────────────────────────────────────
+function IngestionPanel({
+  sessionId, onIndexed,
+}: {
+  sessionId: string;
+  onIndexed: (n: number, files: IndexedFile[]) => void;
+}) {
   const [tab, setTab] = useState<'gh' | 'up'>('gh');
   const [url, setUrl] = useState('');
   const [token, setToken] = useState('');
@@ -74,7 +79,8 @@ function IngestionPanel({ sessionId, onIndexed }: { sessionId: string; onIndexed
     setLoading(true); setErr(''); setRes(null);
     try {
       const r = await ingestGithub(url.trim(), sessionId, token || undefined);
-      setRes(r.data); onIndexed(r.data.indexed_files);
+      setRes(r.data);
+      onIndexed(r.data.indexed_files, r.data.files || []);
     } catch (e: any) { setErr(e.response?.data?.detail || e.message); }
     finally { setLoading(false); }
   };
@@ -86,7 +92,8 @@ function IngestionPanel({ sessionId, onIndexed }: { sessionId: string; onIndexed
     try {
       const data = await Promise.all(files.map(async f => ({ filename: f.name, content: await f.text() })));
       const r = await ingestFiles(data, sessionId);
-      setRes(r.data); onIndexed(r.data.indexed_files);
+      setRes(r.data);
+      onIndexed(r.data.indexed_files, r.data.files || []);
     } catch (e: any) { setErr(e.response?.data?.detail || e.message); }
     finally { setLoading(false); }
   };
@@ -117,60 +124,115 @@ function IngestionPanel({ sessionId, onIndexed }: { sessionId: string; onIndexed
   );
 }
 
-// ── Docs Page ──────────────────────────────────────────────────────────────────
-function DocsPage() {
-  const [code, setCode] = useState(`def calculate_statistics(numbers):
-    total = sum(numbers)
-    count = len(numbers)
-    mean = total / count
-    variance = sum((x - mean) ** 2 for x in numbers) / count
-    std_dev = variance ** 0.5
-    return {"mean": mean, "std_dev": std_dev, "variance": variance}
-
-def find_outliers(data, threshold=2.0):
-    stats = calculate_statistics(data)
-    mean, std = stats["mean"], stats["std_dev"]
-    return [x for x in data if abs(x - mean) > threshold * std]`);
+// ── Docs Page — documents the INDEXED REPO ─────────────────────────────────────
+function DocsPage({ indexedFiles, indexedCount }: {
+  indexedFiles: IndexedFile[];
+  indexedCount: number;
+}) {
+  const [selectedFile, setSelectedFile] = useState<IndexedFile | null>(null);
+  const [customCode, setCustomCode] = useState('');
   const [lang, setLang] = useState('python');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ExplainResult | null>(null);
   const [err, setErr] = useState('');
   const [view, setView] = useState<'overview' | 'functions' | 'flowchart'>('overview');
+  const [mode, setMode] = useState<'repo' | 'custom'>('repo');
 
-  const analyze = async () => {
+  const analyzeFile = async (file: IndexedFile) => {
+    setSelectedFile(file);
     setLoading(true); setErr(''); setResult(null);
     try {
-      const r = await explainCode(code, lang);
+      // Ask the chat to explain the file — uses RAG to pull its content
+      const r = await explainCode(`File: ${file.filepath}\nLanguage: ${file.language}\n\nPlease document this file from the indexed codebase.`, file.language);
       if (r.data.error) setErr(r.data.error);
       else { setResult(r.data); setView('overview'); }
     } catch (e: any) { setErr(e.response?.data?.detail || e.message || 'Error'); }
     finally { setLoading(false); }
   };
 
+  const analyzeCustom = async () => {
+    if (!customCode.trim()) return;
+    setLoading(true); setErr(''); setResult(null); setSelectedFile(null);
+    try {
+      const r = await explainCode(customCode, lang);
+      if (r.data.error) setErr(r.data.error);
+      else { setResult(r.data); setView('overview'); }
+    } catch (e: any) { setErr(e.response?.data?.detail || e.message || 'Error'); }
+    finally { setLoading(false); }
+  };
+
+  const langIcon = (l: string) => {
+    const map: Record<string, string> = { python: '🐍', javascript: '🟨', typescript: '🔷', java: '☕', go: '🐹', rust: '🦀' };
+    return map[l] || '📄';
+  };
+
   return (
     <div className="split">
+      {/* Left — file list or custom editor */}
       <div className="split-left">
-        <div className="split-hdr">
-          <div className="split-title"><Code2 size={15} /> Code Input</div>
-          <select className="sel" value={lang} onChange={e => setLang(e.target.value)}>
-            {LANGS.map(l => <option key={l}>{l}</option>)}
-          </select>
+        <div className="doc-mode-tabs">
+          <button className={`dtab ${mode === 'repo' ? 'active' : ''}`} onClick={() => setMode('repo')}><FolderOpen size={13} /> Repo Files</button>
+          <button className={`dtab ${mode === 'custom' ? 'active' : ''}`} onClick={() => setMode('custom')}><Code2 size={13} /> Custom Code</button>
         </div>
-        <div className="editor-box">
-          <Editor height="100%" language={lang} value={code} onChange={v => setCode(v || '')}
-            theme="vs-dark" options={{ fontSize: 13, minimap: { enabled: false }, wordWrap: 'on', scrollBeyondLastLine: false }} />
-        </div>
-        <button className="btn-pri full" onClick={analyze} disabled={loading}>
-          {loading ? <><Spinner /> Analyzing...</> : <><Sparkles size={14} /> Analyze & Document</>}
-        </button>
+
+        {mode === 'repo' && (
+          <div className="file-list-wrap">
+            {indexedCount === 0 ? (
+              <div className="no-files">
+                <FolderOpen size={32} className="empty-ico" />
+                <p>No files indexed yet.</p>
+                <p className="muted-c">Use the GitHub or Upload button above to index a repo first.</p>
+              </div>
+            ) : (
+              <>
+                <div className="file-list-hdr"><FileCode2 size={13} /> {indexedCount} files indexed</div>
+                <div className="file-list">
+                  {indexedFiles.map((f, i) => (
+                    <button
+                      key={i}
+                      className={`file-item ${selectedFile?.filepath === f.filepath ? 'active' : ''}`}
+                      onClick={() => analyzeFile(f)}
+                    >
+                      <span className="file-lang-ico">{langIcon(f.language)}</span>
+                      <span className="file-name">{f.filename}</span>
+                      <span className="file-path">{f.filepath}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {mode === 'custom' && (
+          <div className="custom-doc-wrap">
+            <div className="split-hdr">
+              <div className="split-title"><Code2 size={15} /> Paste Code</div>
+              <select className="sel" value={lang} onChange={e => setLang(e.target.value)}>
+                {LANGS.map(l => <option key={l}>{l}</option>)}
+              </select>
+            </div>
+            <div className="editor-box">
+              <Editor height="100%" language={lang} value={customCode} onChange={v => setCustomCode(v || '')}
+                theme="vs-dark" options={{ fontSize: 13, minimap: { enabled: false }, wordWrap: 'on', scrollBeyondLastLine: false }} />
+            </div>
+            <button className="btn-pri full" onClick={analyzeCustom} disabled={loading || !customCode.trim()}>
+              {loading ? <><Spinner /> Analyzing...</> : <><Sparkles size={14} /> Analyze & Document</>}
+            </button>
+          </div>
+        )}
       </div>
 
+      {/* Right — results */}
       <div className="split-right">
         {!result && !loading && !err && (
           <div className="empty">
             <Sparkles size={42} className="empty-ico" />
             <h3>Documentation Helper</h3>
-            <p>Paste messy code on the left. DevPilot explains every function, generates docstrings, and draws a flowchart.</p>
+            {mode === 'repo'
+              ? <p>Index a repo above, then click any file on the left to generate full docs for it.</p>
+              : <p>Paste any code on the left and click Analyze to generate docs, docstrings, and a flowchart.</p>
+            }
             <div className="feat-list">
               {['Plain-English overview', 'Function-by-function breakdown', 'Auto docstrings', 'Mermaid flowchart'].map(f => (
                 <div key={f} className="feat"><CheckCircle2 size={13} /> {f}</div>
@@ -178,16 +240,26 @@ def find_outliers(data, threshold=2.0):
             </div>
           </div>
         )}
-        {loading && <div className="loading"><Spinner /><p>Analyzing with AI...</p></div>}
+        {loading && (
+          <div className="loading">
+            <Spinner />
+            <p>Documenting {selectedFile ? selectedFile.filename : 'code'}...</p>
+          </div>
+        )}
         {err && <div className="err-box"><XCircle size={14} /> {err}</div>}
         {result && (
           <div className="result">
+            {selectedFile && (
+              <div className="result-file-hdr">
+                <FileCode2 size={14} /> <b>{selectedFile.filename}</b>
+                <span className="muted-c">{selectedFile.filepath}</span>
+              </div>
+            )}
             <div className="rtabs">
               <button className={`rtab ${view === 'overview' ? 'active' : ''}`} onClick={() => setView('overview')}><FileText size={12} /> Overview</button>
               <button className={`rtab ${view === 'functions' ? 'active' : ''}`} onClick={() => setView('functions')}><Code2 size={12} /> Functions ({result.functions?.length || 0})</button>
               <button className={`rtab ${view === 'flowchart' ? 'active' : ''}`} onClick={() => setView('flowchart')}><GitBranch size={12} /> Flowchart</button>
             </div>
-
             <div className="rcontent">
               {view === 'overview' && (
                 <>
@@ -234,7 +306,7 @@ def find_outliers(data, threshold=2.0):
   );
 }
 
-// ── Debug Page ─────────────────────────────────────────────────────────────────
+// ── Debug Page — 4 modes ────────────────────────────────────────────────────────
 function DebugPage() {
   const [mode, setMode] = useState<DebugMode>('analyze');
   const [stacktrace, setStacktrace] = useState('');
@@ -244,6 +316,10 @@ function DebugPage() {
   const [screenshot, setScreenshot] = useState<string | null>(null);
   const [ssName, setSsName] = useState('');
   const [sourceMap, setSourceMap] = useState('');
+  // Custom code mode
+  const [customCode, setCustomCode] = useState('');
+  const [customLang, setCustomLang] = useState('python');
+  const [customErr, setCustomErr] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [err, setErr] = useState('');
@@ -252,9 +328,21 @@ function DebugPage() {
     setLoading(true); setErr(''); setResult(null);
     try {
       let r;
-      if (mode === 'analyze') r = await debugAnalyze({ stacktrace, error_message: errMsg, code_context: codeCtx, console_logs: logs });
-      else if (mode === 'multimodal') r = await multimodalDebug({ stacktrace, console_logs: logs, screenshot_base64: screenshot || undefined });
-      else r = await decodeStacktrace(stacktrace, sourceMap || undefined);
+      if (mode === 'analyze') {
+        r = await debugAnalyze({ stacktrace, error_message: errMsg, code_context: codeCtx, console_logs: logs });
+      } else if (mode === 'multimodal') {
+        r = await multimodalDebug({ stacktrace, console_logs: logs, screenshot_base64: screenshot || undefined });
+      } else if (mode === 'decode') {
+        r = await decodeStacktrace(stacktrace, sourceMap || undefined);
+      } else {
+        // custom — use code editor content as code_context + error message
+        r = await debugAnalyze({
+          stacktrace,
+          error_message: customErr,
+          code_context: customCode,
+          console_logs: logs,
+        });
+      }
       if (r.data.error) setErr(r.data.error); else setResult(r.data);
     } catch (e: any) { setErr(e.response?.data?.detail || e.message); }
     finally { setLoading(false); }
@@ -270,35 +358,70 @@ function DebugPage() {
 
   const cc = (c: string) => c === 'high' ? 'success' : c === 'medium' ? 'warning' : 'error';
 
+  const canRun = mode === 'custom'
+    ? (customCode.trim().length > 0 || customErr.trim().length > 0)
+    : (stacktrace.trim().length > 0 || errMsg.trim().length > 0);
+
   return (
     <div className="split">
       <div className="split-left debug-left">
         <div className="split-hdr"><div className="split-title"><Bug size={15} /> Debug Input</div></div>
         <div className="dtabs">
-          <button className={`dtab ${mode === 'analyze' ? 'active' : ''}`} onClick={() => setMode('analyze')}><Terminal size={13} /> Analyze Error</button>
-          <button className={`dtab ${mode === 'multimodal' ? 'active' : ''}`} onClick={() => setMode('multimodal')}><Image size={13} /> Multimodal</button>
-          <button className={`dtab ${mode === 'decode' ? 'active' : ''}`} onClick={() => setMode('decode')}><Search size={13} /> Decode Stack</button>
+          <button className={`dtab ${mode === 'analyze' ? 'active' : ''}`} onClick={() => { setMode('analyze'); setResult(null); }}><Terminal size={13} /> Analyze Error</button>
+          <button className={`dtab ${mode === 'multimodal' ? 'active' : ''}`} onClick={() => { setMode('multimodal'); setResult(null); }}><Image size={13} /> Multimodal</button>
+          <button className={`dtab ${mode === 'decode' ? 'active' : ''}`} onClick={() => { setMode('decode'); setResult(null); }}><Search size={13} /> Decode Stack</button>
+          <button className={`dtab ${mode === 'custom' ? 'active' : ''}`} onClick={() => { setMode('custom'); setResult(null); }}><Code2 size={13} /> Custom Code</button>
         </div>
-        <div className="dinputs">
-          <textarea className="ta" rows={5} placeholder="Stacktrace / error trace..." value={stacktrace} onChange={e => setStacktrace(e.target.value)} />
-          {mode === 'analyze' && <>
-            <input className="inp" placeholder="Error message..." value={errMsg} onChange={e => setErrMsg(e.target.value)} />
-            <textarea className="ta" rows={3} placeholder="Code context (optional)..." value={codeCtx} onChange={e => setCodeCtx(e.target.value)} />
-            <textarea className="ta" rows={3} placeholder="Console logs (optional)..." value={logs} onChange={e => setLogs(e.target.value)} />
-          </>}
-          {mode === 'multimodal' && <>
-            <textarea className="ta" rows={3} placeholder="Console logs..." value={logs} onChange={e => setLogs(e.target.value)} />
-            <label className="upload-zone compact">
-              <input type="file" accept="image/*" onChange={onSS} hidden />
-              <Image size={18} /><span>{ssName || 'Upload screenshot (optional)'}</span>
-            </label>
-            {screenshot && <img src={`data:image/png;base64,${screenshot}`} alt="ss" className="ss-preview" />}
-          </>}
-          {mode === 'decode' && (
-            <textarea className="ta" rows={4} placeholder="Source map content (optional)..." value={sourceMap} onChange={e => setSourceMap(e.target.value)} />
-          )}
-        </div>
-        <button className="btn-pri full" onClick={run} disabled={loading || (!stacktrace && !errMsg)}>
+
+        {/* Custom Code Mode — Monaco editor */}
+        {mode === 'custom' && (
+          <div className="custom-debug-wrap">
+            <div className="custom-debug-hdr">
+              <span className="muted-c" style={{ fontSize: 12 }}>Paste your code + describe the error</span>
+              <select className="sel" value={customLang} onChange={e => setCustomLang(e.target.value)}>
+                {LANGS.map(l => <option key={l}>{l}</option>)}
+              </select>
+            </div>
+            <div className="custom-editor-box">
+              <Editor
+                height="100%"
+                language={customLang}
+                value={customCode}
+                onChange={v => setCustomCode(v || '')}
+                theme="vs-dark"
+                options={{ fontSize: 12, minimap: { enabled: false }, wordWrap: 'on', scrollBeyondLastLine: false }}
+              />
+            </div>
+            <input className="inp" placeholder="Error message / what's going wrong..." value={customErr} onChange={e => setCustomErr(e.target.value)} />
+            <textarea className="ta" rows={2} placeholder="Stacktrace (optional)..." value={stacktrace} onChange={e => setStacktrace(e.target.value)} />
+            <textarea className="ta" rows={2} placeholder="Console logs (optional)..." value={logs} onChange={e => setLogs(e.target.value)} />
+          </div>
+        )}
+
+        {/* Standard modes */}
+        {mode !== 'custom' && (
+          <div className="dinputs">
+            <textarea className="ta" rows={5} placeholder="Stacktrace / error trace..." value={stacktrace} onChange={e => setStacktrace(e.target.value)} />
+            {mode === 'analyze' && <>
+              <input className="inp" placeholder="Error message..." value={errMsg} onChange={e => setErrMsg(e.target.value)} />
+              <textarea className="ta" rows={3} placeholder="Code context (optional)..." value={codeCtx} onChange={e => setCodeCtx(e.target.value)} />
+              <textarea className="ta" rows={3} placeholder="Console logs (optional)..." value={logs} onChange={e => setLogs(e.target.value)} />
+            </>}
+            {mode === 'multimodal' && <>
+              <textarea className="ta" rows={3} placeholder="Console logs..." value={logs} onChange={e => setLogs(e.target.value)} />
+              <label className="upload-zone compact">
+                <input type="file" accept="image/*" onChange={onSS} hidden />
+                <Image size={18} /><span>{ssName || 'Upload screenshot (optional)'}</span>
+              </label>
+              {screenshot && <img src={`data:image/png;base64,${screenshot}`} alt="ss" className="ss-preview" />}
+            </>}
+            {mode === 'decode' && (
+              <textarea className="ta" rows={4} placeholder="Source map content (optional)..." value={sourceMap} onChange={e => setSourceMap(e.target.value)} />
+            )}
+          </div>
+        )}
+
+        <button className="btn-pri full" onClick={run} disabled={loading || !canRun}>
           {loading ? <><Spinner /> Analyzing...</> : <><Zap size={14} /> Run Debug Analysis</>}
         </button>
       </div>
@@ -310,7 +433,13 @@ function DebugPage() {
             <h3>AI Debugger</h3>
             <p>Paste your error — DevPilot finds the root cause, suggests a fix, and explains what went wrong.</p>
             <div className="feat-list">
-              {['Root cause analysis', 'AI-generated fix', 'Screenshot + logs + stacktrace correlation', 'Minified stacktrace decoder'].map(f => (
+              {[
+                'Root cause analysis',
+                'AI-generated fix with code',
+                'Screenshot + logs + stacktrace correlation',
+                'Minified stacktrace decoder',
+                'Custom code editor debug',
+              ].map(f => (
                 <div key={f} className="feat"><CheckCircle2 size={13} /> {f}</div>
               ))}
             </div>
@@ -319,7 +448,7 @@ function DebugPage() {
         {loading && <div className="loading"><Spinner /><p>Running AI debug analysis...</p></div>}
         {err && <div className="err-box"><XCircle size={14} /> {err}</div>}
 
-        {result && mode === 'analyze' && (
+        {result && (mode === 'analyze' || mode === 'custom') && (
           <div className="rcontent">
             <div className="dbadges"><Badge text={result.error_type || 'Unknown'} type="warning" /><Badge text={`${result.confidence} confidence`} type={cc(result.confidence)} /></div>
             <div className="dcard red"><h4><XCircle size={13} /> Root Cause</h4><p>{result.root_cause}</p></div>
@@ -369,7 +498,7 @@ function DebugPage() {
   );
 }
 
-// ── Chat Page ──────────────────────────────────────────────────────────────────
+// ── Chat Page ───────────────────────────────────────────────────────────────────
 function ChatPage({ sessionId, indexedCount }: { sessionId: string; indexedCount: number }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -429,9 +558,7 @@ function ChatPage({ sessionId, indexedCount }: { sessionId: string; indexedCount
                     code({ node, className, children, ...props }: any) {
                       const lang = (className || '').replace('language-', '');
                       const code = String(children).replace(/\n$/, '');
-                      if (lang === 'mermaid') {
-                        return <MermaidDiagram chart={code} />;
-                      }
+                      if (lang === 'mermaid') return <MermaidDiagram chart={code} />;
                       return <code className={className} {...props}>{children}</code>;
                     }
                   }}
@@ -460,17 +587,28 @@ function ChatPage({ sessionId, indexedCount }: { sessionId: string; indexedCount
   );
 }
 
-// ── Main App ───────────────────────────────────────────────────────────────────
+// ── Main App ────────────────────────────────────────────────────────────────────
 export default function App() {
   const [tab, setTab] = useState<Tab>('docs');
   const [sessionId, setSessionId] = useState('');
   const [indexedCount, setIndexedCount] = useState(0);
+  const [indexedFiles, setIndexedFiles] = useState<IndexedFile[]>([]);
   const [apiOk, setApiOk] = useState<boolean | null>(null);
 
   useEffect(() => {
     createSession().then(r => setSessionId(r.data.session_id)).catch(() => setSessionId('local-' + Date.now()));
     checkHealth().then(() => setApiOk(true)).catch(() => setApiOk(false));
   }, []);
+
+  const handleIndexed = (n: number, files: IndexedFile[]) => {
+    setIndexedCount(p => p + n);
+    setIndexedFiles(prev => {
+      // Deduplicate by filepath
+      const existing = new Set(prev.map(f => f.filepath));
+      const newFiles = files.filter(f => !existing.has(f.filepath));
+      return [...prev, ...newFiles];
+    });
+  };
 
   return (
     <div className="app">
@@ -494,12 +632,12 @@ export default function App() {
             {tab === 'debug' && <><Bug size={18} /> AI Debugger</>}
             {tab === 'chat' && <><MessageSquare size={18} /> Code Chat</>}
           </div>
-          {sessionId && (tab === 'docs' || tab === 'chat') && (
-            <IngestionPanel sessionId={sessionId} onIndexed={n => setIndexedCount(p => p + n)} />
+          {sessionId && (
+            <IngestionPanel sessionId={sessionId} onIndexed={handleIndexed} />
           )}
         </div>
         <div className="main-body">
-          {tab === 'docs' && <DocsPage />}
+          {tab === 'docs' && <DocsPage indexedFiles={indexedFiles} indexedCount={indexedCount} />}
           {tab === 'debug' && <DebugPage />}
           {tab === 'chat' && <ChatPage sessionId={sessionId} indexedCount={indexedCount} />}
         </div>
