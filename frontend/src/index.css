@@ -229,3 +229,39 @@ details summary { cursor: pointer; color: var(--text3); font-size: 12px; margin-
 .custom-debug-wrap { display: flex; flex-direction: column; flex: 1; overflow: hidden; padding: 0 12px; gap: 8px; min-height: 0; }
 .custom-debug-hdr { display: flex; align-items: center; justify-content: space-between; padding: 8px 0 4px; flex-shrink: 0; }
 .custom-editor-box { flex: 1; min-height: 200px; max-height: 320px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+
+/* ── Folder tree (GitHub-style) ─────────────────────────────────────── */
+.folder-tree { display: flex; flex-direction: column; gap: 2px; padding: 4px 8px; overflow-y: auto; flex: 1; }
+.tree-folder { display: flex; flex-direction: column; }
+.tree-folder-btn { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; border: none; background: transparent; cursor: pointer; width: 100%; text-align: left; color: #e2e8f0; transition: background 0.15s; }
+.tree-folder-btn:hover { background: var(--hover); }
+.tree-arrow { font-size: 10px; color: var(--muted); width: 10px; flex-shrink: 0; }
+.tree-folder-ico { font-size: 14px; flex-shrink: 0; }
+.tree-folder-name { font-size: 13px; font-weight: 600; color: #e2e8f0; flex: 1; }
+.tree-count { font-size: 10px; color: var(--muted); background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 10px; }
+.tree-files { display: flex; flex-direction: column; gap: 1px; }
+.tree-files.indented { padding-left: 20px; border-left: 1px solid var(--border); margin-left: 12px; }
+.tree-file-btn { display: flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: 6px; border: none; background: transparent; cursor: pointer; width: 100%; text-align: left; transition: background 0.15s; }
+.tree-file-btn:hover { background: var(--hover); }
+.tree-file-btn.active { background: rgba(108,142,255,0.15); border-left: 2px solid var(--accent); }
+.tree-file-ico { font-size: 13px; flex-shrink: 0; }
+.tree-file-name { font-size: 13px; color: #f0f4ff !important; font-family: var(--font-mono); font-weight: 500; }
+.tree-file-btn.active .tree-file-name { color: #a5b4fc !important; }
+
+/* ── Richer docs result cards ───────────────────────────────────────── */
+.green-card { background: rgba(52,211,153,0.07) !important; border-color: rgba(52,211,153,0.25) !important; }
+.green-card h4 { color: #34d399; }
+.purple-card { background: rgba(167,139,250,0.07) !important; border-color: rgba(167,139,250,0.25) !important; }
+.purple-card h4 { color: #a78bfa; }
+.api-docs-block { font-family: var(--font-mono); font-size: 12px; color: #e2e8f0; white-space: pre-wrap; line-height: 1.7; background: var(--surface); padding: 12px; border-radius: 6px; overflow-x: auto; }
+
+/* ── Commented code view ────────────────────────────────────────────── */
+.commented-code-wrap { display: flex; flex-direction: column; gap: 8px; }
+.commented-code { font-family: var(--font-mono); font-size: 12px; color: #e2e8f0; white-space: pre; line-height: 1.8; background: #0d1117; padding: 16px; border-radius: 8px; overflow-x: auto; border: 1px solid var(--border); max-height: 600px; overflow-y: auto; }
+
+/* ── Fix file-list-hdr text ─────────────────────────────────────────── */
+.file-list-hdr { color: #94a3b8 !important; }
+
+/* ── Fix card h4 colors ─────────────────────────────────────────────── */
+.card h4 { color: #e2e8f0; margin: 0 0 8px; font-size: 13px; }
+.blue-card h4 { color: #60a5fa; }
