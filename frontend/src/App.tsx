@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import mermaid from 'mermaid';
 import {
-  createSession, ingestGithub, ingestFiles, explainCode,
+  createSession, ingestGithub, ingestFiles, explainCode, fetchFileContent,
   debugAnalyze, multimodalDebug, decodeStacktrace, sendChat, checkHealth,
 } from './lib/api';
 import type { ExplainResult, ChatMessage, Tab, DebugMode, IndexedFile } from './types';
@@ -216,7 +216,8 @@ function FolderTree({ files, selectedFile, onSelect }: {
 }
 
 // ── Docs Page — documents the INDEXED REPO ─────────────────────────────────────
-function DocsPage({ indexedFiles, indexedCount }: {
+function DocsPage({ sessionId, indexedFiles, indexedCount }: {
+  sessionId: string;
   indexedFiles: IndexedFile[];
   indexedCount: number;
 }) {
@@ -233,7 +234,16 @@ function DocsPage({ indexedFiles, indexedCount }: {
     setSelectedFile(file);
     setLoading(true); setErr(''); setResult(null);
     try {
-      const r = await explainCode(`File: ${file.filepath}\nLanguage: ${file.language}\n\nPlease document this file from the indexed codebase.`, file.language);
+      let code = '';
+      // Try to fetch real file content from GitHub
+      try {
+        const fileRes = await fetchFileContent(sessionId, file.filepath);
+        code = fileRes.data.content;
+      } catch {
+        // Fallback: use filepath as context hint (uploaded files)
+        code = `# File: ${file.filepath}\n# Language: ${file.language}\n# (Content fetched from indexed codebase)`;
+      }
+      const r = await explainCode(code, file.language);
       if (r.data.error) setErr(r.data.error);
       else { setResult(r.data); setView('overview'); }
     } catch (e: any) { setErr(e.response?.data?.detail || e.message || 'Error'); }
@@ -770,7 +780,7 @@ export default function App() {
           )}
         </div>
         <div className="main-body">
-          {tab === 'docs' && <DocsPage indexedFiles={indexedFiles} indexedCount={indexedCount} />}
+          {tab === 'docs' && <DocsPage sessionId={sessionId} indexedFiles={indexedFiles} indexedCount={indexedCount} />}
           {tab === 'debug' && <DebugPage />}
           {tab === 'chat' && <ChatPage sessionId={sessionId} indexedCount={indexedCount} />}
         </div>
