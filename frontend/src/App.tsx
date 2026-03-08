@@ -124,6 +124,97 @@ function IngestionPanel({
   );
 }
 
+// ── Mermaid sanitizer ──────────────────────────────────────────────────────────
+function sanitizeMermaid(chart: string): string {
+  if (!chart) return '';
+  let c = chart.trim();
+  // Remove backtick fences if present
+  c = c.replace(/^```mermaid\s*/i, '').replace(/```\s*$/, '').trim();
+  // Ensure starts with a valid diagram type
+  if (!c.match(/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|gitGraph)/i)) {
+    c = 'flowchart TD\n' + c;
+  }
+  // Remove parentheses inside node labels (common Mermaid syntax error)
+  c = c.replace(/\[([^\]]*)\(([^\)]*)\)([^\]]*)\]/g, '[$1$2$3]');
+  // Replace problematic chars in node labels
+  c = c.replace(/\[([^\]]+)\]/g, (_match, inner) => {
+    const clean = inner.replace(/[<>{}]/g, '').replace(/\s+/g, ' ').trim();
+    return `[${clean}]`;
+  });
+  return c;
+}
+
+// ── GitHub-style folder tree ───────────────────────────────────────────────────
+function FolderTree({ files, selectedFile, onSelect }: {
+  files: IndexedFile[];
+  selectedFile: IndexedFile | null;
+  onSelect: (f: IndexedFile) => void;
+}) {
+  const [openFolders, setOpenFolders] = useState<Set<string>>(new Set(['root']));
+
+  // Deduplicate files by filepath, keep first occurrence
+  const seen = new Set<string>();
+  const uniqueFiles = files.filter(f => {
+    if (seen.has(f.filepath)) return false;
+    seen.add(f.filepath);
+    return true;
+  });
+
+  // Group files into folder tree
+  const tree: Record<string, IndexedFile[]> = {};
+  uniqueFiles.forEach(f => {
+    const parts = f.filepath.split('/');
+    const folder = parts.length > 1 ? parts.slice(0, -1).join('/') : 'root';
+    if (!tree[folder]) tree[folder] = [];
+    tree[folder].push(f);
+  });
+
+  const toggleFolder = (folder: string) => {
+    setOpenFolders(prev => {
+      const next = new Set(prev);
+      if (next.has(folder)) next.delete(folder); else next.add(folder);
+      return next;
+    });
+  };
+
+  const extIcon = (filename: string) => {
+    const ext = filename.split('.').pop()?.toLowerCase() || '';
+    const map: Record<string, string> = { py: '🐍', js: '🟨', ts: '🔷', jsx: '⚛️', tsx: '⚛️', java: '☕', go: '🐹', rs: '🦀', css: '🎨', html: '🌐', json: '📋', md: '📝' };
+    return map[ext] || '📄';
+  };
+
+  return (
+    <div className="folder-tree">
+      {Object.entries(tree).sort(([a], [b]) => a === 'root' ? -1 : a.localeCompare(b)).map(([folder, folderFiles]) => (
+        <div key={folder} className="tree-folder">
+          {folder !== 'root' && (
+            <button className="tree-folder-btn" onClick={() => toggleFolder(folder)}>
+              <span className="tree-arrow">{openFolders.has(folder) ? '▾' : '▸'}</span>
+              <span className="tree-folder-ico">📁</span>
+              <span className="tree-folder-name">{folder.split('/').pop()}</span>
+              <span className="tree-count">{folderFiles.length}</span>
+            </button>
+          )}
+          {(folder === 'root' || openFolders.has(folder)) && (
+            <div className={`tree-files ${folder !== 'root' ? 'indented' : ''}`}>
+              {folderFiles.map((f, i) => (
+                <button
+                  key={i}
+                  className={`tree-file-btn ${selectedFile?.filepath === f.filepath ? 'active' : ''}`}
+                  onClick={() => onSelect(f)}
+                >
+                  <span className="tree-file-ico">{extIcon(f.filename)}</span>
+                  <span className="tree-file-name">{f.filename}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Docs Page — documents the INDEXED REPO ─────────────────────────────────────
 function DocsPage({ indexedFiles, indexedCount }: {
   indexedFiles: IndexedFile[];
@@ -135,14 +226,13 @@ function DocsPage({ indexedFiles, indexedCount }: {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ExplainResult | null>(null);
   const [err, setErr] = useState('');
-  const [view, setView] = useState<'overview' | 'functions' | 'flowchart'>('overview');
+  const [view, setView] = useState<'overview' | 'functions' | 'flowchart' | 'code'>('overview');
   const [mode, setMode] = useState<'repo' | 'custom'>('repo');
 
   const analyzeFile = async (file: IndexedFile) => {
     setSelectedFile(file);
     setLoading(true); setErr(''); setResult(null);
     try {
-      // Ask the chat to explain the file — uses RAG to pull its content
       const r = await explainCode(`File: ${file.filepath}\nLanguage: ${file.language}\n\nPlease document this file from the indexed codebase.`, file.language);
       if (r.data.error) setErr(r.data.error);
       else { setResult(r.data); setView('overview'); }
@@ -161,14 +251,9 @@ function DocsPage({ indexedFiles, indexedCount }: {
     finally { setLoading(false); }
   };
 
-  const langIcon = (l: string) => {
-    const map: Record<string, string> = { python: '🐍', javascript: '🟨', typescript: '🔷', java: '☕', go: '🐹', rust: '🦀' };
-    return map[l] || '📄';
-  };
-
   return (
     <div className="split">
-      {/* Left — file list or custom editor */}
+      {/* Left — folder tree or custom editor */}
       <div className="split-left">
         <div className="doc-mode-tabs">
           <button className={`dtab ${mode === 'repo' ? 'active' : ''}`} onClick={() => setMode('repo')}><FolderOpen size={13} /> Repo Files</button>
@@ -185,20 +270,8 @@ function DocsPage({ indexedFiles, indexedCount }: {
               </div>
             ) : (
               <>
-                <div className="file-list-hdr"><FileCode2 size={13} /> {indexedCount} files indexed</div>
-                <div className="file-list">
-                  {indexedFiles.map((f, i) => (
-                    <button
-                      key={i}
-                      className={`file-item ${selectedFile?.filepath === f.filepath ? 'active' : ''}`}
-                      onClick={() => analyzeFile(f)}
-                    >
-                      <span className="file-lang-ico">{langIcon(f.language)}</span>
-                      <span className="file-name">{f.filename}</span>
-                      <span className="file-path">{f.filepath}</span>
-                    </button>
-                  ))}
-                </div>
+                <div className="file-list-hdr"><FileCode2 size={13} /> {indexedCount} files indexed — click any file to document it</div>
+                <FolderTree files={indexedFiles} selectedFile={selectedFile} onSelect={analyzeFile} />
               </>
             )}
           </div>
@@ -223,7 +296,7 @@ function DocsPage({ indexedFiles, indexedCount }: {
         )}
       </div>
 
-      {/* Right — results */}
+      {/* Right — rich results */}
       <div className="split-right">
         {!result && !loading && !err && (
           <div className="empty">
@@ -234,7 +307,7 @@ function DocsPage({ indexedFiles, indexedCount }: {
               : <p>Paste any code on the left and click Analyze to generate docs, docstrings, and a flowchart.</p>
             }
             <div className="feat-list">
-              {['Plain-English overview', 'Function-by-function breakdown', 'Auto docstrings', 'Mermaid flowchart'].map(f => (
+              {['README-style overview', 'Architecture explanation', 'API documentation', 'Function-by-function breakdown', 'Commented source code', 'Mermaid flowchart'].map(f => (
                 <div key={f} className="feat"><CheckCircle2 size={13} /> {f}</div>
               ))}
             </div>
@@ -243,7 +316,7 @@ function DocsPage({ indexedFiles, indexedCount }: {
         {loading && (
           <div className="loading">
             <Spinner />
-            <p>Documenting {selectedFile ? selectedFile.filename : 'code'}...</p>
+            <p>Generating full documentation for {selectedFile ? selectedFile.filename : 'code'}...</p>
           </div>
         )}
         {err && <div className="err-box"><XCircle size={14} /> {err}</div>}
@@ -258,14 +331,42 @@ function DocsPage({ indexedFiles, indexedCount }: {
             <div className="rtabs">
               <button className={`rtab ${view === 'overview' ? 'active' : ''}`} onClick={() => setView('overview')}><FileText size={12} /> Overview</button>
               <button className={`rtab ${view === 'functions' ? 'active' : ''}`} onClick={() => setView('functions')}><Code2 size={12} /> Functions ({result.functions?.length || 0})</button>
+              <button className={`rtab ${view === 'code' ? 'active' : ''}`} onClick={() => setView('code')}><Terminal size={12} /> Commented Code</button>
               <button className={`rtab ${view === 'flowchart' ? 'active' : ''}`} onClick={() => setView('flowchart')}><GitBranch size={12} /> Flowchart</button>
             </div>
             <div className="rcontent">
+
               {view === 'overview' && (
                 <>
-                  <div className="card blue-card"><h4>What it does</h4><p>{result.overview}</p></div>
-                  {result.key_concepts?.length > 0 && <div className="tags">{result.key_concepts.map(c => <Badge key={c} text={c} />)}</div>}
-                  {result.complexity && <div className="info-card"><b>Complexity:</b> {result.complexity}</div>}
+                  <div className="card blue-card">
+                    <h4>📋 What it does</h4>
+                    <p>{result.overview}</p>
+                  </div>
+                  {(result as any).readme && (
+                    <div className="card green-card">
+                      <h4>📖 README</h4>
+                      <p>{(result as any).readme}</p>
+                    </div>
+                  )}
+                  {(result as any).architecture && (
+                    <div className="card purple-card">
+                      <h4>🏗️ Architecture</h4>
+                      <p>{(result as any).architecture}</p>
+                    </div>
+                  )}
+                  {(result as any).api_docs && (
+                    <div className="card">
+                      <h4>🔌 API Documentation</h4>
+                      <pre className="api-docs-block">{(result as any).api_docs}</pre>
+                    </div>
+                  )}
+                  {result.key_concepts?.length > 0 && (
+                    <div>
+                      <div style={{fontSize:12,color:'var(--muted)',marginBottom:6}}>KEY CONCEPTS</div>
+                      <div className="tags">{result.key_concepts.map(c => <Badge key={c} text={c} />)}</div>
+                    </div>
+                  )}
+                  {result.complexity && <div className="info-card"><b>⚡ Complexity:</b> {result.complexity}</div>}
                   {result.potential_issues?.length > 0 && (
                     <div className="warn-card">
                       <b><AlertTriangle size={13} /> Potential Issues</b>
@@ -274,30 +375,61 @@ function DocsPage({ indexedFiles, indexedCount }: {
                   )}
                 </>
               )}
-              {view === 'functions' && result.functions?.map((fn, i) => (
-                <Collapsible key={i} title={fn.name} defaultOpen={i === 0} icon={<Code2 size={13} />}>
-                  <div className="fn-rows">
-                    <div><b>Purpose:</b> {fn.purpose}</div>
-                    {fn.parameters && <div><b>Parameters:</b> {fn.parameters}</div>}
-                    {fn.returns && <div><b>Returns:</b> {fn.returns}</div>}
-                    <div><b>Logic:</b> {fn.logic}</div>
-                    {fn.docstring && (
-                      <div className="docblock">
-                        <div className="docblock-hdr"><b>Docstring</b><CopyButton text={fn.docstring} /></div>
-                        <pre className="codeblock">{fn.docstring}</pre>
+
+              {view === 'functions' && (
+                <>
+                  {(!result.functions || result.functions.length === 0) && (
+                    <div className="muted-c">No functions found in this file.</div>
+                  )}
+                  {result.functions?.map((fn, i) => (
+                    <Collapsible key={i} title={fn.name} defaultOpen={i === 0} icon={<Code2 size={13} />}>
+                      <div className="fn-rows">
+                        <div><b>Purpose:</b> {fn.purpose}</div>
+                        {fn.parameters && <div><b>Parameters:</b> {fn.parameters}</div>}
+                        {fn.returns && <div><b>Returns:</b> {fn.returns}</div>}
+                        {(fn as any).complexity && <div><b>Complexity:</b> {(fn as any).complexity}</div>}
+                        <div><b>Logic:</b> {fn.logic}</div>
+                        {fn.docstring && (
+                          <div className="docblock">
+                            <div className="docblock-hdr"><b>Docstring</b><CopyButton text={fn.docstring} /></div>
+                            <pre className="codeblock">{fn.docstring}</pre>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                </Collapsible>
-              ))}
-              {view === 'flowchart' && (result.flowchart
-                ? <>
-                  <div className="flow-hdr"><span>Mermaid Diagram</span><CopyButton text={result.flowchart} /></div>
-                  <MermaidDiagram chart={result.flowchart} />
-                  <details><summary style={{ cursor: 'pointer', color: '#888', fontSize: 12 }}>Raw Mermaid</summary><pre className="codeblock">{result.flowchart}</pre></details>
+                    </Collapsible>
+                  ))}
                 </>
-                : <div className="muted-c">No flowchart generated</div>
               )}
+
+              {view === 'code' && (
+                <>
+                  {(result as any).commented_code ? (
+                    <div className="commented-code-wrap">
+                      <div className="flow-hdr">
+                        <span>📝 Commented Source Code</span>
+                        <CopyButton text={(result as any).commented_code} />
+                      </div>
+                      <pre className="commented-code">{(result as any).commented_code}</pre>
+                    </div>
+                  ) : (
+                    <div className="muted-c">No commented code generated.</div>
+                  )}
+                </>
+              )}
+
+              {view === 'flowchart' && (
+                result.flowchart
+                  ? <>
+                    <div className="flow-hdr"><span>🔀 Control Flow Diagram</span><CopyButton text={result.flowchart} /></div>
+                    <MermaidDiagram chart={sanitizeMermaid(result.flowchart)} />
+                    <details style={{marginTop:8}}>
+                      <summary style={{ cursor: 'pointer', color: '#888', fontSize: 12 }}>Raw Mermaid source</summary>
+                      <pre className="codeblock">{sanitizeMermaid(result.flowchart)}</pre>
+                    </details>
+                  </>
+                  : <div className="muted-c">No flowchart generated.</div>
+              )}
+
             </div>
           </div>
         )}
@@ -305,6 +437,7 @@ function DocsPage({ indexedFiles, indexedCount }: {
     </div>
   );
 }
+
 
 // ── Debug Page — 4 modes ────────────────────────────────────────────────────────
 function DebugPage() {
