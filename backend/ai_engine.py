@@ -60,28 +60,46 @@ async def _chat_async(system: str, user: str, temperature: float = 0.2, max_toke
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
 
-EXPLAIN_SYSTEM = "You are an expert software engineer. Always respond with valid JSON only — no markdown fences, no extra text."
-EXPLAIN_PROMPT = """Analyze the following code and return a JSON object:
+EXPLAIN_SYSTEM = """You are a senior software engineer writing professional documentation. \
+Always respond with valid JSON only — no markdown fences, no extra text, no backticks around the JSON. \
+Be DETAILED and THOROUGH. Write documentation as if it will be read by new engineers joining the team. \
+Every field should be complete, specific, and informative — not generic placeholders."""
+
+EXPLAIN_PROMPT = """You are documenting the following {language} code. Write detailed, professional documentation.
+
+Return a JSON object with these EXACT fields (all required, all detailed):
 {{
-  "overview": "Clear plain-English summary (2-3 sentences)",
+  "overview": "Write 4-6 sentences. Explain: (1) what this file/module does, (2) its role in the larger system, (3) the main problem it solves, (4) key design decisions. Be specific to THIS code, not generic.",
+  "readme": "Write a full README-style description (5-8 sentences). Include: purpose, how it fits into the architecture, dependencies it uses, important behaviors, and any gotchas or assumptions the code makes.",
+  "architecture": "Describe the architecture and design patterns used (3-5 sentences). Mention: classes and their relationships, data flow, state management, design patterns (singleton, factory, observer etc.), and how components interact.",
+  "api_docs": "List all public functions/methods/classes as a formatted string. For each: name, parameters with types, return type, description, and example usage. Format as: 'functionName(param: type) -> returnType\n  Description\n  Example: ...'",
   "functions": [
     {{
-      "name": "function name",
-      "purpose": "What it does",
-      "parameters": "Parameters description",
-      "returns": "What it returns",
-      "logic": "Step-by-step explanation",
-      "docstring": "Complete Python docstring"
+      "name": "exact function or class name",
+      "purpose": "2-3 sentences explaining what it does and WHY it exists",
+      "parameters": "Each parameter: name (type) - description. Example: 'user_id (int) - The unique identifier of the user'",
+      "returns": "What is returned and in what format/type",
+      "logic": "Step-by-step walkthrough of the logic (4-6 steps minimum). Explain each important line or block.",
+      "docstring": "Complete production-ready docstring with Args, Returns, Raises, and Example sections",
+      "complexity": "Time and space complexity with explanation"
     }}
   ],
-  "flowchart": "Valid Mermaid flowchart TD code",
-  "key_concepts": ["concepts used"],
-  "potential_issues": ["bugs or code smells"],
-  "complexity": "Time and space complexity"
+  "commented_code": "The ENTIRE original code rewritten with inline comments on EVERY important line. Add a comment above each function, class, loop, condition, and return statement explaining what it does and why. Format as a single string with actual newlines.",
+  "flowchart": "Valid Mermaid flowchart TD diagram showing the control flow. Use proper node IDs (A, B, C...), no special characters in labels, no parentheses in node text. Example: A[Start] --> B{{Check condition}} --> C[Process] --> D[End]",
+  "key_concepts": ["specific concept from THIS code", "another specific concept", "library or pattern used"],
+  "potential_issues": ["Specific bug or issue found in THIS code with line reference", "security concern", "performance issue"],
+  "complexity": "Overall time and space complexity of the main operations with Big-O notation"
 }}
 
-Code:
-```{language}
+IMPORTANT RULES:
+- The flowchart MUST use only simple alphanumeric node IDs (A, B, C, D...)
+- Node labels must NOT contain parentheses () or special chars — use square brackets [] or curly braces {{}} only
+- commented_code must include the COMPLETE original code with comments added, not a summary
+- All fields must be specific to THIS code — no generic boilerplate answers
+- functions array must include ALL functions and classes found in the code
+
+Code to document ({language}):
+```
 {code}
 ```"""
 
