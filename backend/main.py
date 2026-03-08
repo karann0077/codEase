@@ -1,10 +1,11 @@
 """
 DevPilot API — FastAPI backend
-Deploy to Render: set GROQ_API_KEY env var in the Render dashboard.
+Embedding model is pre-loaded at startup via lifespan event.
 """
 import base64
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from typing import Dict, List, Optional, Any
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -12,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from config import settings
+from embeddings import load_model_at_startup
 from ingestion import index_github_repo, index_uploaded_files
 from ai_engine import (
     explain_code,
@@ -26,13 +28,25 @@ from vector_index import get_index_stats, clear_session
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # ── Startup: pre-load embedding model so first request is fast ──
+    logger.info("Server starting — loading embedding model...")
+    load_model_at_startup()
+    logger.info("Server ready ✓")
+    yield
+    # ── Shutdown ──
+    logger.info("Server shutting down")
+
+
 app = FastAPI(
     title="DevPilot API",
-    description="AI-powered developer productivity: documentation, debugging, code chat",
+    description="AI-powered developer productivity",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
-# CORS — allow all origins so Vercel frontend can reach Render backend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
