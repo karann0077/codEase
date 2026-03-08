@@ -85,49 +85,49 @@ async def _chat_async(system: str, user: str, temperature: float = 0.2, max_toke
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
 
-EXPLAIN_SYSTEM = """You are a senior software engineer writing professional documentation. \
-Always respond with valid JSON only — no markdown fences, no extra text, no backticks around the JSON. \
-Be DETAILED and THOROUGH. Write documentation as if it will be read by new engineers joining the team. \
-Every field should be complete, specific, and informative — not generic placeholders."""
+EXPLAIN_SYSTEM = "You are a senior software engineer. Respond with valid JSON only — no markdown, no backticks, no extra text. Be specific to the actual code provided."
 
-EXPLAIN_PROMPT = """You are documenting the following {language} code. Write detailed, professional documentation.
+# Primary prompt — lean, always fits in tokens
+EXPLAIN_PROMPT = """Analyze this {language} code and return ONLY a JSON object. No markdown fences.
 
-Return a JSON object with these EXACT fields (all required, all detailed):
 {{
-  "overview": "Write 4-6 sentences. Explain: (1) what this file/module does, (2) its role in the larger system, (3) the main problem it solves, (4) key design decisions. Be specific to THIS code, not generic.",
-  "readme": "Write a full README-style description (5-8 sentences). Include: purpose, how it fits into the architecture, dependencies it uses, important behaviors, and any gotchas or assumptions the code makes.",
-  "architecture": "Describe the architecture and design patterns used (3-5 sentences). Mention: classes and their relationships, data flow, state management, design patterns (singleton, factory, observer etc.), and how components interact.",
-  "api_docs": "List all public functions/methods/classes as a formatted string. For each: name, parameters with types, return type, description, and example usage. Format as: 'functionName(param: type) -> returnType\n  Description\n  Example: ...'",
+  "overview": "3-4 sentences: what this file does, its role, main problem it solves",
+  "readme": "4-5 sentences: purpose, architecture fit, key dependencies, important behaviors",
+  "architecture": "2-3 sentences: design patterns, class relationships, data flow",
+  "api_docs": "One line per function: name(params) -> return | description",
   "functions": [
     {{
-      "name": "exact function or class name",
-      "purpose": "2-3 sentences explaining what it does and WHY it exists",
-      "parameters": "Each parameter: name (type) - description. Example: 'user_id (int) - The unique identifier of the user'",
-      "returns": "What is returned and in what format/type",
-      "logic": "Step-by-step walkthrough of the logic (4-6 steps minimum). Explain each important line or block.",
-      "docstring": "Complete production-ready docstring with Args, Returns, Raises, and Example sections",
-      "complexity": "Time and space complexity with explanation"
+      "name": "function_name",
+      "purpose": "what it does and why it exists (2 sentences)",
+      "parameters": "param (type): description for each",
+      "returns": "return type and what it contains",
+      "logic": "3-5 step walkthrough of the key logic",
+      "docstring": "complete docstring with Args/Returns/Raises",
+      "complexity": "O(n) time, O(1) space — brief explanation"
     }}
   ],
-  "commented_code": "The ENTIRE original code rewritten with inline comments on EVERY important line. Add a comment above each function, class, loop, condition, and return statement explaining what it does and why. Format as a single string with actual newlines.",
-  "flowchart": "Valid Mermaid flowchart TD diagram showing the control flow. Use proper node IDs (A, B, C...), no special characters in labels, no parentheses in node text. Example: A[Start] --> B{{Check condition}} --> C[Process] --> D[End]",
-  "key_concepts": ["specific concept from THIS code", "another specific concept", "library or pattern used"],
-  "potential_issues": ["Specific bug or issue found in THIS code with line reference", "security concern", "performance issue"],
-  "complexity": "Overall time and space complexity of the main operations with Big-O notation"
+  "flowchart": "flowchart TD\nA[Start] --> B[Step] --> C[End]",
+  "key_concepts": ["concept1", "concept2"],
+  "potential_issues": ["specific bug or issue found", "another issue"],
+  "complexity": "overall Big-O with explanation"
 }}
 
-IMPORTANT RULES:
-- The flowchart MUST use only simple alphanumeric node IDs (A, B, C, D...)
-- Node labels must NOT contain parentheses () or special chars — use square brackets [] or curly braces {{}} only
-- commented_code: add inline comments to the ORIGINAL code. Keep it concise — comment every function, class, and key logic block. Do NOT rewrite logic, only add # or // comments
-- All fields must be specific to THIS code — no generic boilerplate answers
-- functions array must include ALL functions and classes found in the code
-- Keep total response under 6000 tokens. If code is very long, summarize the api_docs and readme fields
+Rules:
+- flowchart node IDs: single letters only (A B C D...), labels in square brackets, NO parentheses in labels
+- functions: include every function and class
+- Be concise but specific — no generic filler
 
-Code to document ({language}):
+{language} code:
 ```
 {code}
 ```"""
+
+# Secondary prompt — just commented code, called separately
+COMMENTED_CODE_SYSTEM = "You are a code documentation expert. Add inline comments to every function, class, loop, and key logic line. Return ONLY the commented code as plain text — no JSON, no markdown fences."
+
+COMMENTED_CODE_PROMPT = """Add inline comments to this {language} code. Comment every function definition, class, important variable, loop, condition, and return statement. Return ONLY the commented source code as plain text.
+
+{code}"""
 
 DEBUG_SYSTEM = "You are an expert debugger. Always respond with valid JSON only — no markdown fences."
 DEBUG_PROMPT = """Analyze this error and return JSON:
@@ -194,16 +194,30 @@ Be specific and technical."""
 # ── Public API ────────────────────────────────────────────────────────────────
 
 async def explain_code(code: str, language: str = "python") -> Dict[str, Any]:
+    # Truncate code to ~3000 chars to keep prompt within token budget
+    code_snippet = code[:3000] + ("\n# ... (truncated for documentation)" if len(code) > 3000 else "")
     try:
-        prompt = EXPLAIN_PROMPT.format(code=code, language=language)
-        text = await _chat_async(EXPLAIN_SYSTEM, prompt, temperature=0.2, max_tokens=8000)
+        prompt = EXPLAIN_PROMPT.format(code=code_snippet, language=language)
+        text = await _chat_async(EXPLAIN_SYSTEM, prompt, temperature=0.2, max_tokens=3500)
         return _parse_json(text)
     except json.JSONDecodeError as e:
         logger.error(f"explain_code JSON error: {e}")
-        return {"error": "AI returned malformed JSON. The file may be too large — try a smaller file or use Custom Code mode."}
+        return {"error": "AI returned malformed JSON. Try again or use Custom Code mode with a smaller snippet."}
     except Exception as e:
         logger.error(f"explain_code error: {e}")
         return {"error": str(e)}
+
+
+async def explain_code_commented(code: str, language: str = "python") -> Dict[str, Any]:
+    """Separate call just for commented code — plain text response, no JSON."""
+    code_snippet = code[:4000] + ("\n# ... (truncated)" if len(code) > 4000 else "")
+    try:
+        prompt = COMMENTED_CODE_PROMPT.format(code=code_snippet, language=language)
+        text = await _chat_async(COMMENTED_CODE_SYSTEM, prompt, temperature=0.1, max_tokens=4000)
+        return {"commented_code": text}
+    except Exception as e:
+        logger.error(f"explain_code_commented error: {e}")
+        return {"commented_code": "# Error generating commented code"}
 
 
 async def debug_analyze(
