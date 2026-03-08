@@ -4,7 +4,13 @@ const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export const api = axios.create({
   baseURL: BASE_URL,
-  timeout: 120000,
+  timeout: 30000, // 30s for normal requests
+});
+
+// Ingestion gets a much longer timeout — cold start + downloading files
+export const ingestApi = axios.create({
+  baseURL: BASE_URL,
+  timeout: 300000, // 5 minutes for ingestion
 });
 
 // Session management
@@ -12,12 +18,12 @@ export const createSession = () => api.post('/session/create');
 export const getSessionStats = (sessionId: string) => api.get(`/session/${sessionId}/stats`);
 export const clearSession = (sessionId: string) => api.delete(`/session/${sessionId}`);
 
-// Ingestion
+// Ingestion — uses long timeout client
 export const ingestGithub = (repoUrl: string, sessionId: string, githubToken?: string) =>
-  api.post('/ingest/github', { repo_url: repoUrl, session_id: sessionId, github_token: githubToken });
+  ingestApi.post('/ingest/github', { repo_url: repoUrl, session_id: sessionId, github_token: githubToken });
 
 export const ingestFiles = (files: { filename: string; content: string }[], sessionId: string) =>
-  api.post('/ingest/files', { files, session_id: sessionId });
+  ingestApi.post('/ingest/files', { files, session_id: sessionId });
 
 // Documentation
 export const explainCode = (code: string, language: string) =>
