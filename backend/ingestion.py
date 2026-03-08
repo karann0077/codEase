@@ -1,20 +1,25 @@
 """
-GitHub repository ingestion - fast version.
-Uses Git Trees API (1 call for all file paths) + concurrent downloads.
-Adapted from CodeRAG's indexing approach.
+GitHub repo ingestion — faithful to CodeRAG's main.py full_reindex().
+Key additions vs original:
+- Fetches from GitHub API instead of local filesystem
+- Code-aware chunking (functions/classes split, not just character split)
+- Each chunk gets its own embedding vector (better retrieval precision)
+- Async + concurrent for speed on Render free tier
 """
 import asyncio
 import logging
+import re
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 import httpx
 
-from embeddings import generate_embeddings
+from embeddings import generate_embeddings_async
 from vector_index import add_to_index, clear_session, get_index_stats
 
 logger = logging.getLogger(__name__)
 
+# Same language map as before
 LANGUAGE_MAP = {
     ".py": "python", ".js": "javascript", ".ts": "typescript",
     ".jsx": "jsx", ".tsx": "tsx", ".java": "java", ".go": "go",
@@ -24,16 +29,18 @@ LANGUAGE_MAP = {
     ".yml": "yaml", ".html": "html", ".css": "css", ".sh": "bash",
 }
 
+# Same ignore list as CodeRAG's IGNORE_PATHS
 IGNORE_DIRS = {
     ".git", "node_modules", "__pycache__", ".venv", "venv",
     "dist", "build", ".next", "target", ".idea", ".vscode",
-    "coverage", ".pytest_cache", "eggs", ".eggs",
+    "coverage", ".pytest_cache", "tests", "test",
 }
 
 ALLOWED_EXTENSIONS = set(LANGUAGE_MAP.keys())
-MAX_FILE_SIZE = 80_000   # 80KB per file — skip huge generated files
-MAX_FILES     = 80       # cap total files on free tier (memory limit)
-MAX_CONCURRENT = 8       # parallel downloads — fast but won't hit rate limits
+MAX_FILE_SIZE  = 50_000   # 50KB
+MAX_FILES      = 40       # cap for Render free RAM
+MAX_CONCURRENT = 10       # parallel downloads
+CHUNK_SIZE     = 1500     # chars per chunk — tighter than CodeRAG's 4000 for better precision
 
 
 def detect_language(filepath: str) -> str:
@@ -41,22 +48,99 @@ def detect_language(filepath: str) -> str:
 
 
 def should_index(path: str, size: int) -> bool:
-    """Return True if this file is worth indexing."""
+    """Mirror CodeRAG's should_ignore_path logic."""
     p = Path(path)
-    # Skip ignored dirs anywhere in path
     if any(part in IGNORE_DIRS for part in p.parts):
         return False
-    # Must be a known code/text extension
     if p.suffix.lower() not in ALLOWED_EXTENSIONS:
         return False
-    # Skip huge files (minified JS, lock files, etc.)
     if size > MAX_FILE_SIZE:
         return False
-    # Skip obvious non-code files by name
-    name = p.name.lower()
-    if name in {"package-lock.json", "yarn.lock", "poetry.lock", "pipfile.lock", "composer.lock"}:
+    if p.name.lower() in {
+        "package-lock.json", "yarn.lock", "poetry.lock",
+        "pipfile.lock", "composer.lock", "pnpm-lock.yaml",
+    }:
         return False
     return True
+
+
+def chunk_code(content: str, filepath: str, chunk_size: int = CHUNK_SIZE) -> List[Tuple[str, str]]:
+    """
+    Code-aware chunking — inspired by CodeRAG's approach.
+    Splits on function/class boundaries for Python/JS/TS,
+    falls back to paragraph/character chunking for other files.
+    Returns list of (chunk_text, chunk_label) tuples.
+    """
+    content = content.strip()
+    if not content:
+        return []
+
+    ext = Path(filepath).suffix.lower()
+    chunks = []
+
+    if ext == ".py":
+        # Split on top-level def/class boundaries
+        pattern = re.compile(r'\n(?=(?:def |class |async def ))', re.MULTILINE)
+        parts = pattern.split(content)
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            # If a single function is still huge, sub-chunk it
+            if len(part) > chunk_size:
+                for i in range(0, len(part), chunk_size):
+                    sub = part[i:i + chunk_size].strip()
+                    if sub:
+                        chunks.append(sub)
+            else:
+                chunks.append(part)
+
+    elif ext in {".js", ".ts", ".jsx", ".tsx"}:
+        # Split on function/arrow function/class boundaries
+        pattern = re.compile(
+            r'\n(?=(?:function |class |const \w+ = |export (?:default )?(?:function|class)|async function))',
+            re.MULTILINE
+        )
+        parts = pattern.split(content)
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            if len(part) > chunk_size:
+                for i in range(0, len(part), chunk_size):
+                    sub = part[i:i + chunk_size].strip()
+                    if sub:
+                        chunks.append(sub)
+            else:
+                chunks.append(part)
+
+    else:
+        # For other files: split on blank lines (paragraphs), then by size
+        paragraphs = re.split(r'\n\s*\n', content)
+        current = ""
+        for para in paragraphs:
+            if len(current) + len(para) < chunk_size:
+                current += "\n\n" + para
+            else:
+                if current.strip():
+                    chunks.append(current.strip())
+                current = para
+        if current.strip():
+            chunks.append(current.strip())
+
+        # If any chunk is still too large, sub-split
+        final = []
+        for chunk in chunks:
+            if len(chunk) > chunk_size:
+                for i in range(0, len(chunk), chunk_size):
+                    sub = chunk[i:i + chunk_size].strip()
+                    if sub:
+                        final.append(sub)
+            else:
+                final.append(chunk)
+        chunks = final
+
+    return [(c, f"{Path(filepath).name} chunk {i+1}/{len(chunks)}") for i, c in enumerate(chunks)] if chunks else [(content[:chunk_size], Path(filepath).name)]
 
 
 async def index_github_repo(
@@ -65,45 +149,47 @@ async def index_github_repo(
     github_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Fast GitHub repo ingestion:
-    1. One API call to get the full file tree
-    2. Concurrent downloads of all code files
-    3. Batch embedding generation
+    Full RAG ingestion — mirrors CodeRAG's full_reindex() but over GitHub API.
+    Each file is chunked at function/class boundaries, each chunk gets its own embedding.
     """
     clear_session(session_id)
 
-    # Parse owner/repo
     parts = repo_url.rstrip("/").split("/")
     if "github.com" not in repo_url:
         return {"error": "Invalid GitHub URL. Use: https://github.com/owner/repo"}
-    idx = parts.index("github.com")
-    owner = parts[idx + 1]
+    idx      = parts.index("github.com")
+    owner    = parts[idx + 1]
     repo_name = parts[idx + 2].replace(".git", "")
 
     headers = {"Accept": "application/vnd.github.v3+json"}
     if github_token:
         headers["Authorization"] = f"token {github_token}"
 
-    indexed = 0
-    skipped = 0
-    errors = []
+    indexed_files   = 0
+    indexed_chunks  = 0
+    skipped         = 0
 
-    async with httpx.AsyncClient(timeout=30, headers=headers) as client:
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(30.0, read=20.0),
+        headers=headers,
+        follow_redirects=True,
+    ) as client:
 
-        # ── Step 1: Get default branch ────────────────────────────────
+        # ── 1. Get default branch ─────────────────────────────────────
         repo_resp = await client.get(
             f"https://api.github.com/repos/{owner}/{repo_name}"
         )
         if repo_resp.status_code == 404:
-            return {"error": f"Repo not found: {owner}/{repo_name}. Check the URL and make sure it's public."}
+            return {"error": f"Repo not found or private: {owner}/{repo_name}"}
         if repo_resp.status_code == 403:
-            return {"error": "GitHub rate limit hit. Add a GitHub token in the token field to get 5000 requests/hour."}
+            return {"error": "GitHub rate limit hit. Add a GitHub token."}
         if repo_resp.status_code != 200:
-            return {"error": f"GitHub API error: {repo_resp.status_code}"}
+            return {"error": f"GitHub API error {repo_resp.status_code}"}
 
         default_branch = repo_resp.json().get("default_branch", "main")
+        logger.info(f"Indexing {owner}/{repo_name} @ {default_branch}")
 
-        # ── Step 2: Get full file tree in ONE API call ─────────────────
+        # ── 2. Full file tree in one call (CodeRAG does os.walk, we do this) ──
         tree_resp = await client.get(
             f"https://api.github.com/repos/{owner}/{repo_name}/git/trees/{default_branch}",
             params={"recursive": "1"},
@@ -111,82 +197,101 @@ async def index_github_repo(
         if tree_resp.status_code != 200:
             return {"error": f"Could not fetch file tree: {tree_resp.status_code}"}
 
-        tree_data = tree_resp.json()
-        if tree_data.get("truncated"):
-            logger.warning("Tree truncated — repo is very large, only partial indexing")
-
-        # Filter to indexable files
-        all_files = [
-            item for item in tree_data.get("tree", [])
-            if item["type"] == "blob" and should_index(item["path"], item.get("size", 0))
+        all_blobs = [
+            item for item in tree_resp.json().get("tree", [])
+            if item["type"] == "blob"
+            and should_index(item["path"], item.get("size", 0))
         ]
 
-        # Cap to MAX_FILES to stay within Render free memory
-        if len(all_files) > MAX_FILES:
-            logger.info(f"Capping at {MAX_FILES} files (found {len(all_files)})")
-            all_files = all_files[:MAX_FILES]
+        if len(all_blobs) > MAX_FILES:
+            logger.info(f"Capping {len(all_blobs)} → {MAX_FILES} files")
+            all_blobs = all_blobs[:MAX_FILES]
 
-        if not all_files:
+        if not all_blobs:
             return {
                 "repo": f"{owner}/{repo_name}",
-                "indexed_files": 0,
-                "skipped_files": 0,
-                "errors": ["No indexable code files found in this repo."],
+                "indexed_files": 0, "indexed_chunks": 0, "skipped_files": 0,
+                "errors": ["No indexable code files found."],
                 "files": [],
             }
 
-        # ── Step 3: Download files concurrently ───────────────────────
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+        logger.info(f"Downloading {len(all_blobs)} files...")
 
-        async def fetch_file(item: dict) -> Optional[Dict]:
-            async with semaphore:
-                raw_url = f"https://raw.githubusercontent.com/{owner}/{repo_name}/{default_branch}/{item['path']}"
+        # ── 3. Concurrent downloads ───────────────────────────────────
+        sem = asyncio.Semaphore(MAX_CONCURRENT)
+
+        async def fetch_one(item: dict) -> Optional[Dict]:
+            async with sem:
+                url = (
+                    f"https://raw.githubusercontent.com"
+                    f"/{owner}/{repo_name}/{default_branch}/{item['path']}"
+                )
                 try:
-                    r = await client.get(raw_url, timeout=15)
+                    r = await client.get(url, timeout=15)
                     if r.status_code == 200:
                         return {
-                            "path": item["path"],
-                            "name": Path(item["path"]).name,
-                            "content": r.text,
+                            "path":     item["path"],
+                            "name":     Path(item["path"]).name,
+                            "content":  r.text,
                             "language": detect_language(item["path"]),
                         }
                 except Exception as e:
-                    logger.warning(f"Failed to fetch {item['path']}: {e}")
+                    logger.warning(f"Download failed {item['path']}: {e}")
                 return None
 
-        # Run all downloads concurrently
-        results = await asyncio.gather(*[fetch_file(f) for f in all_files])
-        downloaded = [r for r in results if r is not None]
+        downloads = await asyncio.gather(*[fetch_one(f) for f in all_blobs])
+        files_ok  = [f for f in downloads if f is not None]
+        skipped  += len(all_blobs) - len(files_ok)
 
-        # ── Step 4: Generate embeddings and index ─────────────────────
-        for file_data in downloaded:
-            try:
-                embedding = generate_embeddings(file_data["content"])
-                if embedding is not None:
-                    add_to_index(
-                        session_id=session_id,
-                        embeddings=embedding,
-                        content=file_data["content"],
-                        filename=file_data["name"],
-                        filepath=file_data["path"],
-                        language=file_data["language"],
-                    )
-                    indexed += 1
-                else:
-                    skipped += 1
-            except Exception as e:
-                logger.error(f"Error indexing {file_data['path']}: {e}")
+        logger.info(f"Downloaded {len(files_ok)} files. Chunking and embedding...")
+
+        # ── 4. Chunk + embed each file — mirrors CodeRAG's full_reindex loop ──
+        async def process_file(file_data: dict):
+            nonlocal indexed_files, indexed_chunks, skipped
+
+            # Code-aware chunking
+            chunks = chunk_code(file_data["content"], file_data["path"])
+            if not chunks:
+                skipped += 1
+                return
+
+            file_indexed = False
+            for chunk_text, chunk_label in chunks:
+                if not chunk_text.strip():
+                    continue
+                try:
+                    # Each chunk gets its own embedding — true RAG like CodeRAG
+                    emb = await generate_embeddings_async(chunk_text)
+                    if emb is not None:
+                        add_to_index(
+                            session_id=session_id,
+                            embeddings=emb,
+                            content=chunk_text,           # chunk, not whole file
+                            filename=chunk_label,
+                            filepath=file_data["path"],
+                            language=file_data["language"],
+                        )
+                        indexed_chunks += 1
+                        file_indexed = True
+                except Exception as e:
+                    logger.error(f"Embed failed {file_data['path']}: {e}")
+
+            if file_indexed:
+                indexed_files += 1
+            else:
                 skipped += 1
 
-        skipped += len(all_files) - len(downloaded)
+        # Process all files concurrently
+        await asyncio.gather(*[process_file(f) for f in files_ok])
+        logger.info(f"Done. files={indexed_files} chunks={indexed_chunks} skipped={skipped}")
 
-    stats = get_index_stats(session_id)
     return {
-        "repo": f"{owner}/{repo_name}",
-        "indexed_files": indexed,
-        "skipped_files": skipped,
-        "errors": errors[:5],
-        "files": stats["files"],
+        "repo":           f"{owner}/{repo_name}",
+        "indexed_files":  indexed_files,
+        "indexed_chunks": indexed_chunks,
+        "skipped_files":  skipped,
+        "errors":         [],
+        "files":          get_index_stats(session_id)["files"],
     }
 
 
@@ -194,32 +299,46 @@ async def index_uploaded_files(
     session_id: str,
     files_content: List[Dict[str, str]],
 ) -> Dict[str, Any]:
-    """Index a list of uploaded files: [{"filename": ..., "content": ...}]"""
-    indexed = 0
-    skipped = 0
+    """Mirror CodeRAG's full_reindex for uploaded files."""
+    indexed_files  = 0
+    indexed_chunks = 0
+    skipped        = 0
 
-    for f in files_content:
+    async def process_one(f: dict):
+        nonlocal indexed_files, indexed_chunks, skipped
+        content  = f.get("content", "")
         filename = f.get("filename", "unknown")
-        content = f.get("content", "")
         if not content.strip():
             skipped += 1
-            continue
-        embedding = generate_embeddings(content)
-        if embedding is not None:
-            add_to_index(
-                session_id=session_id,
-                embeddings=embedding,
-                content=content,
-                filename=filename,
-                filepath=filename,
-                language=detect_language(filename),
-            )
-            indexed += 1
+            return
+
+        chunks = chunk_code(content, filename)
+        file_indexed = False
+        for chunk_text, chunk_label in chunks:
+            if not chunk_text.strip():
+                continue
+            emb = await generate_embeddings_async(chunk_text)
+            if emb is not None:
+                add_to_index(
+                    session_id=session_id,
+                    embeddings=emb,
+                    content=chunk_text,
+                    filename=chunk_label,
+                    filepath=filename,
+                    language=detect_language(filename),
+                )
+                indexed_chunks += 1
+                file_indexed = True
+        if file_indexed:
+            indexed_files += 1
         else:
             skipped += 1
 
+    await asyncio.gather(*[process_one(f) for f in files_content])
+
     return {
-        "indexed_files": indexed,
-        "skipped_files": skipped,
-        "files": get_index_stats(session_id)["files"],
+        "indexed_files":  indexed_files,
+        "indexed_chunks": indexed_chunks,
+        "skipped_files":  skipped,
+        "files":          get_index_stats(session_id)["files"],
     }
