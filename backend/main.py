@@ -122,6 +122,9 @@ def session_stats(session_id: str):
 
 # ── Ingestion ─────────────────────────────────────────────────────────────────
 
+# Store repo info per session for later file fetching
+_session_repos: dict = {}
+
 @app.post("/ingest/github")
 async def ingest_github(req: GithubIngestRequest):
     session_id = req.session_id or str(uuid.uuid4())
@@ -130,7 +133,35 @@ async def ingest_github(req: GithubIngestRequest):
         repo_url=req.repo_url,
         github_token=req.github_token or settings.github_token or None,
     )
+    # Store repo metadata for file fetching
+    if "repo" in result and "error" not in result:
+        parts = req.repo_url.rstrip("/").split("/")
+        idx = parts.index("github.com")
+        _session_repos[session_id] = {
+            "owner": parts[idx + 1],
+            "repo": parts[idx + 2],
+            "branch": result.get("branch", "main"),
+            "token": req.github_token or settings.github_token or None,
+        }
     return {"session_id": session_id, **result}
+
+@app.get("/fetch-file")
+async def fetch_file(session_id: str, filepath: str):
+    """Fetch raw file content from GitHub for documentation."""
+    import httpx
+    info = _session_repos.get(session_id)
+    if not info:
+        raise HTTPException(status_code=404, detail="No GitHub repo indexed for this session")
+    owner, repo, branch = info["owner"], info["repo"], info["branch"]
+    url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{filepath}"
+    headers = {}
+    if info.get("token"):
+        headers["Authorization"] = f"token {info['token']}"
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.get(url, headers=headers)
+    if r.status_code != 200:
+        raise HTTPException(status_code=404, detail=f"File not found: {filepath}")
+    return {"content": r.text, "filepath": filepath}
 
 @app.post("/ingest/files")
 async def ingest_files(req: FileIngestRequest):
