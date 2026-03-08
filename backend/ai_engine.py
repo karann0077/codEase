@@ -27,11 +27,36 @@ def get_client() -> Optional[Groq]:
 
 def _parse_json(text: str) -> dict:
     text = text.strip()
+    # Strip markdown fences
     if text.startswith("```"):
         lines = text.split("\n")
         inner = "\n".join(lines[1:-1]) if lines[-1].strip() == "```" else "\n".join(lines[1:])
         text = inner.strip()
-    return json.loads(text)
+    # Try direct parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    # Try to extract JSON object from surrounding text
+    start = text.find('{')
+    end = text.rfind('}')
+    if start != -1 and end != -1:
+        try:
+            return json.loads(text[start:end+1])
+        except json.JSONDecodeError:
+            pass
+    # Try to repair truncated JSON by closing open brackets
+    try:
+        repaired = text
+        open_braces = repaired.count('{') - repaired.count('}')
+        open_brackets = repaired.count('[') - repaired.count(']')
+        # Close any open string first (truncation mid-string)
+        if repaired.count('"') % 2 != 0:
+            repaired += '"'
+        repaired += ']' * max(0, open_brackets) + '}' * max(0, open_braces)
+        return json.loads(repaired)
+    except Exception:
+        raise json.JSONDecodeError("Could not parse JSON", text, 0)
 
 
 def _chat_sync(system: str, user: str, temperature: float = 0.2, max_tokens: int = 4000) -> str:
@@ -94,9 +119,10 @@ Return a JSON object with these EXACT fields (all required, all detailed):
 IMPORTANT RULES:
 - The flowchart MUST use only simple alphanumeric node IDs (A, B, C, D...)
 - Node labels must NOT contain parentheses () or special chars — use square brackets [] or curly braces {{}} only
-- commented_code must include the COMPLETE original code with comments added, not a summary
+- commented_code: add inline comments to the ORIGINAL code. Keep it concise — comment every function, class, and key logic block. Do NOT rewrite logic, only add # or // comments
 - All fields must be specific to THIS code — no generic boilerplate answers
 - functions array must include ALL functions and classes found in the code
+- Keep total response under 6000 tokens. If code is very long, summarize the api_docs and readme fields
 
 Code to document ({language}):
 ```
@@ -170,10 +196,11 @@ Be specific and technical."""
 async def explain_code(code: str, language: str = "python") -> Dict[str, Any]:
     try:
         prompt = EXPLAIN_PROMPT.format(code=code, language=language)
-        text = await _chat_async(EXPLAIN_SYSTEM, prompt, temperature=0.2, max_tokens=4000)
+        text = await _chat_async(EXPLAIN_SYSTEM, prompt, temperature=0.2, max_tokens=8000)
         return _parse_json(text)
-    except json.JSONDecodeError:
-        return {"error": "AI returned malformed JSON. Try again."}
+    except json.JSONDecodeError as e:
+        logger.error(f"explain_code JSON error: {e}")
+        return {"error": "AI returned malformed JSON. The file may be too large — try a smaller file or use Custom Code mode."}
     except Exception as e:
         logger.error(f"explain_code error: {e}")
         return {"error": str(e)}
