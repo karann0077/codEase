@@ -110,7 +110,7 @@ function IngestionPanel({ sessionId, onIndexed }: { sessionId: string; onIndexed
           <Upload size={22} /> <span>Click to upload code files</span>
         </label>
       )}
-      {loading && <div className="status-row"><Spinner /> Indexing...</div>}
+      {loading && <div className="status-row"><Spinner /> Indexing... (may take 30–60s on first run while server warms up)</div>}
       {err && <div className="err-row"><XCircle size={13} /> {err}</div>}
       {res && <div className="ok-row"><CheckCircle2 size={13} /> Indexed <b>{res.indexed_files}</b> files{res.repo ? ` from ${res.repo}` : ''}</div>}
     </div>
