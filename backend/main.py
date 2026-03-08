@@ -16,7 +16,7 @@ from config import settings
 from embeddings import load_model_at_startup
 from ingestion import index_github_repo, index_uploaded_files
 from ai_engine import (
-    explain_code,
+    explain_code, explain_code_commented,
     debug_analyze,
     multimodal_debug,
     decode_minified_stacktrace,
@@ -192,6 +192,12 @@ async def explain_endpoint(req: ExplainCodeRequest):
     if not req.code.strip():
         raise HTTPException(400, "Code cannot be empty")
     return await explain_code(req.code, req.language)
+
+@app.post("/docs/commented-code")
+async def commented_code_endpoint(req: ExplainCodeRequest):
+    if not req.code.strip():
+        raise HTTPException(400, "Code cannot be empty")
+    return await explain_code_commented(req.code, req.language)
 
 
 # ── Debugging ─────────────────────────────────────────────────────────────────
