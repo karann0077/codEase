@@ -1,151 +1,314 @@
-# DevPilot — AI Developer Productivity Suite
+# ⚡ DevPilot — AI Developer Productivity Suite
 
-> Documentation Helper · AI Debugger · RAG-Powered Code Chat
-
-**100% free to run** — uses Groq's free LLM API + local sentence-transformers embeddings (no OpenAI needed).
-
----
-
-## Tech Stack
-
-| Layer | Tech | Cost |
-|-------|------|------|
-| LLM (chat/debug/docs) | Groq API — llama-3.3-70b | Free tier |
-| Vision (screenshots) | Groq — llama-3.2-11b-vision | Free tier |
-| Embeddings | sentence-transformers (local CPU) | Free / no API |
-| Vector search | FAISS in-memory | Free |
-| Backend | FastAPI + Python | Free on Render |
-| Frontend | React + Vite + TypeScript | Free on Vercel |
-| Editor | Monaco Editor | Free |
-| Diagrams | Mermaid.js | Free |
+> **Documentation · Debugging · Code Intelligence**
+> Index any GitHub repo and get instant AI-powered docs, debugging, and code chat.
 
 ---
 
-## Get Your Free Groq API Key
+## 🚀 What is DevPilot?
 
-1. Go to [console.groq.com](https://console.groq.com)
-2. Sign up (free, no credit card)
-3. Dashboard → API Keys → Create API Key
-4. Copy the key starting with `gsk_...`
+DevPilot is a full-stack AI-powered developer tool that solves three problems developers face daily:
 
-**Free tier limits** (as of 2025):
-- 14,400 requests/day
-- 6,000 tokens/minute per model
-- Multiple models available
+- 📄 **Code is hard to understand** → Auto-generate README-style docs, flowcharts, and commented code
+- 🐛 **Bugs take too long to find** → AI root cause analysis with fixed code in seconds
+- 💬 **Documentation never gets written** → RAG-based chat grounded in your actual codebase
+
+Built with **Groq LLM** (free tier), **FAISS vector search**, and **fastembed** — runs 100% free.
 
 ---
 
-## Local Development
+## ✨ Features
 
-### 1. Backend
+### 📄 1. Documentation Helper
 
-```bash
-cd backend
-cp .env.example .env
-# Edit .env — paste your GROQ_API_KEY
+Index any GitHub repo and click any file to generate:
 
-pip install -r requirements.txt
+| Tab | What you get |
+|-----|-------------|
+| **Overview** | README-style summary, architecture explanation, API docs, key concepts, potential issues, complexity |
+| **Functions** | Every function documented with purpose, parameters, returns, step-by-step logic, full docstring |
+| **Commented Code** | Full source with inline comments on every function, class, loop, and condition |
+| **Flowchart** | Live-rendered Mermaid.js control flow diagram |
 
-# First run downloads the embedding model (~90MB, one time only)
-uvicorn main:app --reload --port 8000
+**Two modes:**
+- **Repo Files** — GitHub-style folder tree, click any file to document it
+- **Custom Code** — Paste any snippet into the Monaco editor
+
+---
+
+### 🐛 2. AI Debugger
+
+Four debugging modes:
+
+#### 🔍 Analyze Error
+Paste stacktrace + error message + optional code context and console logs.
+
+**Returns:** error type · root cause · explanation · exact fix · fixed code snippet · prevention advice · confidence level
+
+#### 🖼️ Multimodal Debug
+Upload a **screenshot** + stacktrace + console logs. AI correlates all three signals to find the exact file and line.
+
+**Returns:** screenshot interpretation · most likely file:line · root cause · step-by-step fix
+
+#### 🔎 Decode Minified Stacktrace
+Paste a minified JS stacktrace (e.g. `at t.e (main.8f3a2.js:1:4521)`). Optionally add source map.
+
+**Returns:** decoded frames · original file:line references · confidence per frame · plain-English summary
+
+#### 💻 Custom Code Debug
+Monaco editor — paste your buggy code + error message. AI sees your actual source and gives precise root cause + fix.
+
+---
+
+### 💬 3. Code Chat (RAG)
+
+Chat with your codebase. Every answer is grounded in your actual code — not hallucinated from training data.
+
+**How it works:**
+1. Index a GitHub repo or upload files
+2. Your question → embedded to 384-dim vector via `fastembed`
+3. FAISS searches indexed chunks → top 3 semantically similar chunks returned
+4. Chunks injected into Groq prompt with filename + similarity score
+5. AI answers with full awareness of your real code
+
+**Example questions:**
+```
+"How does authentication work in this project?"
+"Where is the database connection set up?"
+"Find all places where API calls are made"
+"What does the UserService class do?"
+"What are the main API endpoints?"
 ```
 
-API docs: `http://localhost:8000/docs`
+Mermaid flowcharts render live inside chat responses.
 
-### 2. Frontend
+---
 
-```bash
-cd frontend
-cp .env.example .env.local
-# Set: VITE_API_URL=http://localhost:8000
-
-npm install
-npm run dev
-# Runs at http://localhost:3000
+## 🏗️ Architecture
 ```
-
----
-
-## Deploy to Render (Backend)
-
-1. Push this repo to GitHub
-2. Go to [render.com](https://render.com) → New → Web Service
-3. Connect your repo, set **Root Directory** = `backend`
-4. Settings:
-   - **Build Command:** `pip install -r requirements.txt`
-   - **Start Command:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
-   - **Plan:** Free
-5. Environment Variables:
-   | Key | Value |
-   |-----|-------|
-   | `GROQ_API_KEY` | `gsk_...` your Groq key |
-   | `CHAT_MODEL` | `llama-3.3-70b-versatile` |
-   | `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` |
-   | `EMBEDDING_DIM` | `384` |
-   | `GITHUB_TOKEN` | optional, for private repos |
-
-> ⚠️ **Note on Render Free:** First request after inactivity takes ~30s to spin up (cold start). sentence-transformers model (~90MB) downloads on first build.
-
----
-
-## Deploy to Vercel (Frontend)
-
-1. Go to [vercel.com](https://vercel.com) → New Project → Import your repo
-2. Set **Root Directory** = `frontend`
-3. Add Environment Variable:
-   | Key | Value |
-   |-----|-------|
-   | `VITE_API_URL` | `https://devpilot-api.onrender.com` (your Render URL) |
-4. Deploy
-
----
-
-## Environment Variables
-
-### Backend (`backend/.env`)
-```env
-GROQ_API_KEY=gsk_your_key_here
-
-# Model options (all free on Groq):
-# llama-3.3-70b-versatile  ← recommended, best quality
-# llama-3.1-8b-instant     ← fastest responses
-# mixtral-8x7b-32768       ← large context window
-# gemma2-9b-it             ← Google Gemma 2
-CHAT_MODEL=llama-3.3-70b-versatile
-
-EMBEDDING_MODEL=all-MiniLM-L6-v2
-EMBEDDING_DIM=384
-
-GITHUB_TOKEN=ghp_optional_for_private_repos
-```
-
-### Frontend (`frontend/.env.local`)
-```env
-VITE_API_URL=http://localhost:8000
+Browser (Vercel)
+     │
+     │  HTTPS — axios (30s normal / 300s ingestion timeout)
+     ▼
+FastAPI Backend (Render, Python 3.11.9)
+     │
+     ├── Groq API ──────── LLM inference (llama-3.3-70b-versatile)
+     │                     Vision (llama-3.2-11b-vision-preview)
+     │
+     ├── fastembed ──────── Local ONNX embeddings (BAAI/bge-small-en-v1.5, 384-dim)
+     │                      Cached at /tmp/fastembed_cache
+     │
+     └── FAISS ─────────── IndexFlatIP, in-memory, per-session
+                           L2 normalized for cosine similarity
 ```
 
 ---
 
-## API Reference
+## 🛠️ Tech Stack
+
+| Layer | Technology | Details |
+|-------|-----------|---------|
+| LLM | `llama-3.3-70b-versatile` | Groq API, free tier |
+| Vision | `llama-3.2-11b-vision-preview` | Groq vision model for screenshots |
+| Embeddings | `BAAI/bge-small-en-v1.5` | fastembed local ONNX, 384-dim |
+| Vector DB | FAISS `IndexFlatIP` | In-memory, per-session, cosine similarity |
+| Backend | FastAPI + Python 3.11.9 | Async, deployed on Render free tier |
+| Frontend | React + TypeScript + Vite | Monaco editor, Mermaid.js, Vercel |
+| RAG Pipeline | CodeRAG-faithful | Chunk-level indexing, concurrent embeddings |
+
+---
+
+## 📁 Project Structure
+```
+codEase/
+├── backend/
+│   ├── main.py           # FastAPI app — all endpoints, lifespan startup, CORS
+│   ├── ai_engine.py      # All Groq calls via run_in_executor (async-safe)
+│   ├── embeddings.py     # fastembed wrapper — sync + async embedding functions
+│   ├── ingestion.py      # GitHub Trees API ingestion + code-aware chunking
+│   ├── vector_index.py   # FAISS per-session index — add, search, stats
+│   ├── config.py         # pydantic-settings config from env vars
+│   ├── requirements.txt
+│   ├── render.yaml
+│   └── runtime.txt       # python-3.11.9
+└── frontend/
+    ├── src/
+    │   ├── App.tsx        # All pages: Docs, Debugger, Chat
+    │   ├── lib/api.ts     # Axios clients — 30s normal / 300s ingestion
+    │   ├── types/index.ts # TypeScript types
+    │   └── index.css      # Full dark theme
+    ├── vercel.json
+    └── vite.config.ts
+```
+
+---
+
+## 🔌 API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/health` | Health + Groq status |
-| POST | `/session/create` | New session |
-| POST | `/ingest/github` | Index GitHub repo |
-| POST | `/ingest/files` | Index file list |
-| POST | `/ingest/upload` | Multipart upload |
-| POST | `/docs/explain` | Explain + document code |
-| POST | `/debug/analyze` | Error analysis + fix |
-| POST | `/debug/multimodal` | Screenshot + logs + stacktrace |
-| POST | `/debug/decode-stacktrace` | Decode minified JS/TS |
-| POST | `/chat` | RAG chat with codebase |
+| `GET` | `/health` | API status + groq_configured bool |
+| `POST` | `/session/create` | Create new UUID session |
+| `DELETE` | `/session/{id}` | Clear FAISS index for session |
+| `GET` | `/session/{id}/stats` | List indexed files |
+| `POST` | `/ingest/github` | Index a public GitHub repo |
+| `POST` | `/ingest/files` | Index uploaded files |
+| `GET` | `/fetch-file` | Fetch raw file from GitHub for docs |
+| `POST` | `/docs/explain` | Generate documentation JSON |
+| `POST` | `/docs/commented-code` | Generate commented source (lazy load) |
+| `POST` | `/debug/analyze` | Analyze error + stacktrace |
+| `POST` | `/debug/multimodal` | Correlate screenshot + logs + stack |
+| `POST` | `/debug/decode-stacktrace` | Decode minified JS stacktrace |
+| `POST` | `/chat` | RAG chat with indexed codebase |
 
 ---
 
-## Credits
+## ⚙️ RAG Pipeline (CodeRAG-Faithful)
 
-- **ChatDBG** (Emery Berger et al.) — structured AI debugging prompts
-- **CodeRAG** — FAISS vector search + RAG pipeline
-- **Groq** — blazing fast free LLM inference
-- **sentence-transformers** — free local embeddings
+### Ingestion
+1. Parse `owner/repo` from GitHub URL
+2. `GET api.github.com/repos/{owner}/{repo}/git/trees/{branch}?recursive=1` — **one API call** for full file tree
+3. Filter with `should_index()` — skips `node_modules`, `__pycache__`, `.git`, lock files, files >50KB
+4. Cap at **40 files** (Render free tier RAM limit ~512MB)
+5. **Concurrent download** via `asyncio.Semaphore(10)` + `asyncio.gather`
+6. **Code-aware chunking:**
+   - Python → splits on `def` / `class` / `async def` boundaries
+   - JS/TS → splits on `function` / `class` / `export` boundaries
+   - Others → splits on blank lines
+7. Each chunk embedded concurrently via `asyncio.gather`
+8. All chunks added to `FAISS IndexFlatIP` with L2 normalization
+
+### Query
+1. User question → `fastembed` → 384-dim vector → L2 normalized
+2. FAISS inner product search → top 3 chunks
+3. Context format: `File / Path / Similarity: 0.847 / Content`
+4. Groq LLM generates grounded answer
+
+---
+
+## 🚀 Deployment
+
+### Backend — Render
+
+| Setting | Value |
+|---------|-------|
+| Root Directory | `backend` |
+| Build Command | `pip install -r requirements.txt` |
+| Start Command | `uvicorn main:app --host 0.0.0.0 --port $PORT` |
+| Health Check Path | `/health` |
+
+**Required Environment Variables:**
+
+| Variable | Value | Notes |
+|----------|-------|-------|
+| `GROQ_API_KEY` | From [console.groq.com](https://console.groq.com) | Required |
+| `PYTHON_VERSION` | `3.11.9` | **Must set** — Render defaults to 3.14 which breaks pydantic-core |
+| `GITHUB_TOKEN` | `ghp_...` | Optional — raises rate limit 60 → 5000 req/hr |
+
+### Frontend — Vercel
+
+| Setting | Value |
+|---------|-------|
+| Root Directory | `frontend` |
+| Framework | Vite (auto-detected) |
+
+**Required Environment Variables:**
+
+| Variable | Value |
+|----------|-------|
+| `VITE_API_URL` | `https://your-backend.onrender.com` |
+
+### ⏱️ Cold Start Note
+
+Render free tier sleeps after **15 minutes** of inactivity. First request takes ~30–60s:
+1. Server wakes (~20s)
+2. fastembed downloads BAAI model (~50MB) to `/tmp/fastembed_cache`
+3. Warmup embed JITs the ONNX model
+
+This is why the frontend ingestion timeout is set to **5 minutes**.
+
+---
+
+## 💻 Local Development
+
+### Backend
+```bash
+cd backend
+pip install -r requirements.txt
+cp .env.example .env        # Add GROQ_API_KEY
+uvicorn main:app --reload --port 8000
+```
+
+### Frontend
+```bash
+cd frontend
+npm install
+cp .env.example .env        # Set VITE_API_URL=http://localhost:8000
+npm run dev                 # Opens at http://localhost:3000
+```
+
+The fastembed model downloads and caches automatically on first run at `/tmp/fastembed_cache`.
+
+---
+
+## 🧪 Demo Repo — TaskFlow
+
+A small Python task manager CLI with **9 real bugs** — built to demo all three DevPilot features.
+
+**Repo:** [`github.com/karann0077/demopr`](https://github.com/karann0077/demopr)
+
+| # | File | Bug | Error Type |
+|---|------|-----|-----------|
+| 1 | `task_manager.py` | `deadline` stored as `str` not `datetime` | TypeError |
+| 2 | `task_manager.py` | `is_overdue()` compares `datetime > str` | TypeError |
+| 3 | `task_manager.py` | `get_task()` missing KeyError handling | KeyError |
+| 4 | `auth.py` | `validate_password()` never returns `True` | Logic Bug |
+| 5 | `auth.py` | MD5 used for password hashing | Security Bug |
+| 6 | `auth.py` | Session timeout: minutes compared to seconds | Logic Bug |
+| 7 | `stats.py` | `calculate_average([])` → division by zero | ZeroDivisionError |
+| 8 | `stats.py` | Wrong median for even-length lists | Logic Bug |
+| 9 | `stats.py` | Priority distribution returns decimals not % | Logic Bug |
+
+**Demo flow:**
+1. **Code Chat** → index repo → ask *"What bugs exist in this codebase?"*
+2. **Debugger → Analyze Error** → paste the stacktrace below
+3. **Debugger → Custom Code** → paste `task_manager.py` → get root cause + fixed code
+4. **Documentation** → click `stats.py` → see docs, flowchart, commented code
+
+**Demo stacktrace:**
+```
+Traceback (most recent call last):
+  File "main.py", line 44, in main
+    overdue = manager.get_overdue_tasks()
+  File "src/task_manager.py", line 52, in get_overdue_tasks
+    return [t for t in self.tasks.values() if not t.completed and t.is_overdue()]
+  File "src/task_manager.py", line 28, in is_overdue
+    return datetime.now() > self.deadline
+TypeError: '>' not supported between instances of 'datetime.datetime' and 'str'
+```
+
+---
+
+## ⚠️ Known Limitations
+
+| Limitation | Details |
+|-----------|---------|
+| No persistence | FAISS index lives in RAM — Render restarts (every ~15min idle) wipe all indexed data |
+| Public repos only | `raw.githubusercontent.com` requires public repos — private needs GitHub token |
+| 40 file cap | Large repos auto-capped to protect free tier RAM (~512MB) |
+| 50KB file limit | Files over 50KB skipped during ingestion |
+| No auth | No user accounts — anyone with the URL can use the deployment |
+| Groq rate limits | Free tier per-minute limits may affect heavy concurrent use |
+
+---
+
+## 📄 License
+
+MIT — see [LICENSE](LICENSE)
+
+---
+
+<div align="center">
+  <strong>Built with ⚡ by <a href="https://github.com/karann0077">karann0077</a></strong><br/>
+  <sub>Groq · FAISS · fastembed · FastAPI · React · TypeScript · Vercel · Render</sub>
+</div>
