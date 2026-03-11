@@ -1,6 +1,4 @@
-"""
-AI Engine - All Groq LLM calls run in thread executor so they never block the async event loop.
-"""
+
 import asyncio
 import logging
 import json
