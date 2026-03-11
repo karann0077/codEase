@@ -1,11 +1,4 @@
-"""
-GitHub repo ingestion — faithful to CodeRAG's main.py full_reindex().
-Key additions vs original:
-- Fetches from GitHub API instead of local filesystem
-- Code-aware chunking (functions/classes split, not just character split)
-- Each chunk gets its own embedding vector (better retrieval precision)
-- Async + concurrent for speed on Render free tier
-"""
+
 import asyncio
 import logging
 import re
@@ -19,7 +12,7 @@ from vector_index import add_to_index, clear_session, get_index_stats
 
 logger = logging.getLogger(__name__)
 
-# Same language map as before
+
 LANGUAGE_MAP = {
     ".py": "python", ".js": "javascript", ".ts": "typescript",
     ".jsx": "jsx", ".tsx": "tsx", ".java": "java", ".go": "go",
@@ -29,7 +22,7 @@ LANGUAGE_MAP = {
     ".yml": "yaml", ".html": "html", ".css": "css", ".sh": "bash",
 }
 
-# Same ignore list as CodeRAG's IGNORE_PATHS
+
 IGNORE_DIRS = {
     ".git", "node_modules", "__pycache__", ".venv", "venv",
     "dist", "build", ".next", "target", ".idea", ".vscode",
@@ -40,7 +33,7 @@ ALLOWED_EXTENSIONS = set(LANGUAGE_MAP.keys())
 MAX_FILE_SIZE  = 50_000   # 50KB
 MAX_FILES      = 40       # cap for Render free RAM
 MAX_CONCURRENT = 10       # parallel downloads
-CHUNK_SIZE     = 1500     # chars per chunk — tighter than CodeRAG's 4000 for better precision
+CHUNK_SIZE     = 1500     
 
 
 def detect_language(filepath: str) -> str:
