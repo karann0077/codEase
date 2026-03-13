@@ -885,7 +885,6 @@ export default function App() {
               {tab === 'debug' && <><Bug size={18} /> AI Debugger</>}
               {tab === 'chat' && <><MessageSquare size={18} /> Code Chat</>}
             </div>
-            {sessionId && (
               <button
                 className={`ingest-toggle ${ingestOpen ? 'open' : ''}`}
                 onClick={() => setIngestOpen((o: boolean) => !o)}
@@ -895,13 +894,25 @@ export default function App() {
                 {indexedCount > 0
                   ? <span className="ingest-toggle-label">{indexedCount} files indexed</span>
                   : <span className="ingest-toggle-label">Index Repo</span>}
+                {apiOk === null && <span className="ingest-toggle-api-badge connecting">Connecting...</span>}
+                {apiOk === false && <span className="ingest-toggle-api-badge offline">Offline</span>}
                 <ChevronDown size={12} className="ingest-chevron" />
               </button>
-            )}
           </div>
-          {sessionId && ingestOpen && (
+          {ingestOpen && (
             <div className="ingest-dropdown">
-              <IngestionPanel sessionId={sessionId} apiOk={apiOk} onIndexed={(n: number, files: IndexedFile[], ri?: any) => { handleIndexed(n, files, ri); if (n > 0) setIngestOpen(false); }} />
+              {/* API not yet connected — show banner inside dropdown */}
+              {apiOk !== true && (
+                <div className={`api-wait-banner ${apiOk === false ? 'err' : ''}`}>
+                  {apiOk === null
+                    ? <><Spinner /> <span>Connecting to API — this takes 20–30s on first load. You can type your repo URL while waiting.</span></>
+                    : <><XCircle size={13} /> <span>API is offline. Please refresh the page or try again.</span></>
+                  }
+                </div>
+              )}
+              {sessionId && (
+                <IngestionPanel sessionId={sessionId} apiOk={apiOk} onIndexed={(n: number, files: IndexedFile[], ri?: any) => { handleIndexed(n, files, ri); if (n > 0) setIngestOpen(false); }} />
+              )}
             </div>
           )}
         </div>
