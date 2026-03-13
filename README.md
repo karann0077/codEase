@@ -1,4 +1,4 @@
-# ⚡ DevPilot — AI Developer Productivity Suite
+#  DevPilot - AI Developer Productivity Suite
 
 > **Documentation · Debugging · Code Intelligence**
 > Index any GitHub repo and get instant AI-powered docs, debugging, and code chat.
@@ -7,11 +7,11 @@
 
 ## 🚀 What is DevPilot?
 
-DevPilot is a full-stack AI-powered developer tool that solves three problems developers face daily:
+DevPilot is a full stack AI powered developer tool that solves three problems developers face daily:
 
-- 📄 **Code is hard to understand** → Auto-generate README-style docs, flowcharts, and commented code
+- 📄 **Code is hard to understand** → Auto-generate README style docs, flowcharts, and commented code
 - 🐛 **Bugs take too long to find** → AI root cause analysis with fixed code in seconds
-- 💬 **Documentation never gets written** → RAG-based chat grounded in your actual codebase
+- 💬 **Documentation never gets written** → RAG based chat grounded in your actual codebase
 
 Built with **Groq LLM** (free tier), **FAISS vector search**, and **fastembed** — runs 100% free.
 
@@ -25,13 +25,13 @@ Index any GitHub repo and click any file to generate:
 
 | Tab | What you get |
 |-----|-------------|
-| **Overview** | README-style summary, architecture explanation, API docs, key concepts, potential issues, complexity |
+| **Overview** | README style summary, architecture explanation, API docs, key concepts, potential issues, complexity |
 | **Functions** | Every function documented with purpose, parameters, returns, step-by-step logic, full docstring |
 | **Commented Code** | Full source with inline comments on every function, class, loop, and condition |
 | **Flowchart** | Live-rendered Mermaid.js control flow diagram |
 
 **Two modes:**
-- **Repo Files** — GitHub-style folder tree, click any file to document it
+- **Repo Files** — GitHub style folder tree, click any file to document it
 - **Custom Code** — Paste any snippet into the Monaco editor
 
 ---
@@ -56,7 +56,7 @@ Paste a minified JS stacktrace (e.g. `at t.e (main.8f3a2.js:1:4521)`). Optionall
 **Returns:** decoded frames · original file:line references · confidence per frame · plain-English summary
 
 #### 💻 Custom Code Debug
-Monaco editor — paste your buggy code + error message. AI sees your actual source and gives precise root cause + fix.
+Monaco editor  paste your buggy code + error message. AI sees your actual source and gives precise root cause + fix.
 
 ---
 
@@ -66,7 +66,7 @@ Chat with your codebase. Every answer is grounded in your actual code — not ha
 
 **How it works:**
 1. Index a GitHub repo or upload files
-2. Your question → embedded to 384-dim vector via `fastembed`
+2. Your question → embedded to 384 dim vector via `fastembed`
 3. FAISS searches indexed chunks → top 3 semantically similar chunks returned
 4. Chunks injected into Groq prompt with filename + similarity score
 5. AI answers with full awareness of your real code
@@ -237,6 +237,6 @@ TypeError: '>' not supported between instances of 'datetime.datetime' and 'str'
 
 
 <div align="center">
-  <strong>Built with ⚡ by <a href="https://github.com/karann0077">karann0077</a></strong><br/>
+  <strong>Built with ❤️ by <a href="https://github.com/karann0077">karann0077</a></strong><br/>
   <sub>Groq · FAISS · fastembed · FastAPI · React · TypeScript · Vercel · Render</sub>
 </div>
