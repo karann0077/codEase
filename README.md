@@ -184,72 +184,7 @@ codEase/
 3. Context format: `File / Path / Similarity: 0.847 / Content`
 4. Groq LLM generates grounded answer
 
----
 
-## 🚀 Deployment
-
-### Backend — Render
-
-| Setting | Value |
-|---------|-------|
-| Root Directory | `backend` |
-| Build Command | `pip install -r requirements.txt` |
-| Start Command | `uvicorn main:app --host 0.0.0.0 --port $PORT` |
-| Health Check Path | `/health` |
-
-**Required Environment Variables:**
-
-| Variable | Value | Notes |
-|----------|-------|-------|
-| `GROQ_API_KEY` | From [console.groq.com](https://console.groq.com) | Required |
-| `PYTHON_VERSION` | `3.11.9` | **Must set** — Render defaults to 3.14 which breaks pydantic-core |
-| `GITHUB_TOKEN` | `ghp_...` | Optional — raises rate limit 60 → 5000 req/hr |
-
-### Frontend — Vercel
-
-| Setting | Value |
-|---------|-------|
-| Root Directory | `frontend` |
-| Framework | Vite (auto-detected) |
-
-**Required Environment Variables:**
-
-| Variable | Value |
-|----------|-------|
-| `VITE_API_URL` | `https://your-backend.onrender.com` |
-
-### ⏱️ Cold Start Note
-
-Render free tier sleeps after **15 minutes** of inactivity. First request takes ~30–60s:
-1. Server wakes (~20s)
-2. fastembed downloads BAAI model (~50MB) to `/tmp/fastembed_cache`
-3. Warmup embed JITs the ONNX model
-
-This is why the frontend ingestion timeout is set to **5 minutes**.
-
----
-
-## 💻 Local Development
-
-### Backend
-```bash
-cd backend
-pip install -r requirements.txt
-cp .env.example .env        # Add GROQ_API_KEY
-uvicorn main:app --reload --port 8000
-```
-
-### Frontend
-```bash
-cd frontend
-npm install
-cp .env.example .env        # Set VITE_API_URL=http://localhost:8000
-npm run dev                 # Opens at http://localhost:3000
-```
-
-The fastembed model downloads and caches automatically on first run at `/tmp/fastembed_cache`.
-
----
 
 ## 🧪 Demo Repo — TaskFlow
 
