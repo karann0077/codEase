@@ -493,14 +493,17 @@ function DocsPage({ sessionId, indexedFiles, indexedCount, repoInfo: repoProp }:
                   {(!result.functions || result.functions.length === 0) && (
                     <div className="muted-c">No functions found in this file.</div>
                   )}
+                  <div className="fn-list-hdr">
+                    <span>{result.functions.length} functions found — click to expand</span>
+                  </div>
                   {result.functions?.map((fn, i) => (
-                    <Collapsible key={i} title={fn.name} defaultOpen={i === 0} icon={<Code2 size={13} />}>
+                    <Collapsible key={i} title={fn.name} defaultOpen={false} icon={<Code2 size={13} />}>
                       <div className="fn-rows">
-                        <div><b>Purpose:</b> {fn.purpose}</div>
+                        {fn.purpose && <div><b>Purpose:</b> {fn.purpose}</div>}
                         {fn.parameters && <div><b>Parameters:</b> {fn.parameters}</div>}
                         {fn.returns && <div><b>Returns:</b> {fn.returns}</div>}
                         {(fn as any).complexity && <div><b>Complexity:</b> {(fn as any).complexity}</div>}
-                        <div><b>Logic:</b> {fn.logic}</div>
+                        {fn.logic && <div><b>Logic:</b> {fn.logic}</div>}
                         {fn.docstring && (
                           <div className="docblock">
                             <div className="docblock-hdr"><b>Docstring</b><CopyButton text={fn.docstring} /></div>
@@ -841,6 +844,7 @@ export default function App() {
   const [indexedCount, setIndexedCount] = useState(0);
   const [indexedFiles, setIndexedFiles] = useState<IndexedFile[]>([]);
   const [lastRepoInfo, setLastRepoInfo] = useState<{owner:string,repo:string,branch:string} | null>(null);
+  const [ingestOpen, setIngestOpen] = useState(false);
   const [apiOk, setApiOk] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -875,13 +879,30 @@ export default function App() {
 
       <main className="main">
         <div className="main-hdr">
-          <div className="main-title">
-            {tab === 'docs' && <><FileText size={18} /> Documentation Helper</>}
-            {tab === 'debug' && <><Bug size={18} /> AI Debugger</>}
-            {tab === 'chat' && <><MessageSquare size={18} /> Code Chat</>}
+          <div className="main-hdr-top">
+            <div className="main-title">
+              {tab === 'docs' && <><FileText size={18} /> Documentation Helper</>}
+              {tab === 'debug' && <><Bug size={18} /> AI Debugger</>}
+              {tab === 'chat' && <><MessageSquare size={18} /> Code Chat</>}
+            </div>
+            {sessionId && (
+              <button
+                className={`ingest-toggle ${ingestOpen ? 'open' : ''}`}
+                onClick={() => setIngestOpen((o: boolean) => !o)}
+                title="Toggle repo indexing panel"
+              >
+                <GitBranch size={13} />
+                {indexedCount > 0
+                  ? <span className="ingest-toggle-label">{indexedCount} files indexed</span>
+                  : <span className="ingest-toggle-label">Index Repo</span>}
+                <ChevronDown size={12} className="ingest-chevron" />
+              </button>
+            )}
           </div>
-          {sessionId && (
-            <IngestionPanel sessionId={sessionId} apiOk={apiOk} onIndexed={handleIndexed} />
+          {sessionId && ingestOpen && (
+            <div className="ingest-dropdown">
+              <IngestionPanel sessionId={sessionId} apiOk={apiOk} onIndexed={(n: number, files: IndexedFile[], ri?: any) => { handleIndexed(n, files, ri); if (n > 0) setIngestOpen(false); }} />
+            </div>
           )}
         </div>
         <div className="main-body">
