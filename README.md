@@ -300,13 +300,6 @@ TypeError: '>' not supported between instances of 'datetime.datetime' and 'str'
 | No auth | No user accounts — anyone with the URL can use the deployment |
 | Groq rate limits | Free tier per-minute limits may affect heavy concurrent use |
 
----
-
-## 📄 License
-
-MIT — see [LICENSE](LICENSE)
-
----
 
 <div align="center">
   <strong>Built with ⚡ by <a href="https://github.com/karann0077">karann0077</a></strong><br/>
