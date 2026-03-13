@@ -61,86 +61,14 @@ function Collapsible({ title, children, defaultOpen = false, icon }: any) {
 }
 
 // ── Ingestion Panel ─────────────────────────────────────────────────────────────
-function IngestionPanel({
-  sessionId, onIndexed,
-}: {
-  sessionId: string;
-  onIndexed: (n: number, files: IndexedFile[], repoInfo?: {owner:string,repo:string,branch:string}) => void;
-}) {
-  const [tab, setTab] = useState<'gh' | 'up'>('gh');
-  const [url, setUrl] = useState('');
-  const [token, setToken] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [res, setRes] = useState<any>(null);
-  const [err, setErr] = useState('');
-
-  const doGithub = async () => {
-    if (!url.trim()) return;
-    setLoading(true); setErr(''); setRes(null);
-    try {
-      const r = await ingestGithub(url.trim(), sessionId, token || undefined);
-      setRes(r.data);
-      onIndexed(r.data.indexed_files, r.data.files || [], {
-        owner: url.trim().replace(/\/+$/, '').split('/').slice(-2)[0],
-        repo:  url.trim().replace(/\/+$/, '').split('/').slice(-1)[0],
-        branch: r.data.branch || 'main',
-      });
-    } catch (e: any) { setErr(e.response?.data?.detail || e.message); }
-    finally { setLoading(false); }
-  };
-
-  const doUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    if (!files.length) return;
-    setLoading(true); setErr(''); setRes(null);
-    try {
-      const data = await Promise.all(files.map(async f => ({ filename: f.name, content: await f.text() })));
-      const r = await ingestFiles(data, sessionId);
-      setRes(r.data);
-      onIndexed(r.data.indexed_files, r.data.files || []);
-    } catch (e: any) { setErr(e.response?.data?.detail || e.message); }
-    finally { setLoading(false); }
-  };
-
-  return (
-    <div className="ingest">
-      <div className="ingest-tabs">
-        <button className={`itab ${tab === 'gh' ? 'active' : ''}`} onClick={() => setTab('gh')}><Github size={13} /> GitHub</button>
-        <button className={`itab ${tab === 'up' ? 'active' : ''}`} onClick={() => setTab('up')}><Upload size={13} /> Upload</button>
-      </div>
-      {tab === 'gh' && (
-        <div className="ingest-row">
-          <input className="inp" placeholder="https://github.com/owner/repo" value={url} onChange={e => setUrl(e.target.value)} onKeyDown={e => e.key === 'Enter' && doGithub()} />
-          <input className="inp" type="password" placeholder="GitHub Token (optional)" value={token} onChange={e => setToken(e.target.value)} />
-          <button className="btn-pri" onClick={doGithub} disabled={loading || !url}>{loading ? <Spinner /> : <GitBranch size={14} />} Index Repo</button>
-        </div>
-      )}
-      {tab === 'up' && (
-        <label className="upload-zone">
-          <input type="file" multiple accept=".py,.js,.ts,.jsx,.tsx,.java,.go,.rs,.cpp,.c,.md,.txt,.json" onChange={doUpload} hidden />
-          <Upload size={22} /> <span>Click to upload code files</span>
-        </label>
-      )}
-      {loading && <div className="status-row"><Spinner /> Indexing... (may take 30–60s on first run while server warms up)</div>}
-      {err && <div className="err-row"><XCircle size={13} /> {err}</div>}
-      {res && <div className="ok-row"><CheckCircle2 size={13} /> Indexed <b>{res.indexed_files}</b> files{res.repo ? ` from ${res.repo}` : ''}</div>}
-    </div>
-  );
-}
-
-// ── Mermaid sanitizer ──────────────────────────────────────────────────────────
 function sanitizeMermaid(chart: string): string {
   if (!chart) return '';
   let c = chart.trim();
-  // Remove backtick fences if present
   c = c.replace(/^```mermaid\s*/i, '').replace(/```\s*$/, '').trim();
-  // Ensure starts with a valid diagram type
   if (!c.match(/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|gitGraph)/i)) {
     c = 'flowchart TD\n' + c;
   }
-  // Remove parentheses inside node labels (common Mermaid syntax error)
   c = c.replace(/\[([^\]]*)\(([^\)]*)\)([^\]]*)\]/g, '[$1$2$3]');
-  // Replace problematic chars in node labels
   c = c.replace(/\[([^\]]+)\]/g, (_match, inner) => {
     const clean = inner.replace(/[<>{}]/g, '').replace(/\s+/g, ' ').trim();
     return `[${clean}]`;
@@ -155,8 +83,6 @@ function FolderTree({ files, selectedFile, onSelect }: {
   onSelect: (f: IndexedFile) => void;
 }) {
   const [openFolders, setOpenFolders] = useState<Set<string>>(new Set(['root']));
-
-  // Deduplicate files by true filepath (strip " chunk X/Y" suffix from filename)
   const seen = new Set<string>();
   const uniqueFiles = files
     .map(f => ({ ...f, filename: f.filename.replace(/\s+chunk\s+\d+\/\d+$/i, '').trim() }))
@@ -165,8 +91,6 @@ function FolderTree({ files, selectedFile, onSelect }: {
       seen.add(f.filepath);
       return true;
     });
-
-  // Group files into folder tree
   const tree: Record<string, IndexedFile[]> = {};
   uniqueFiles.forEach(f => {
     const parts = f.filepath.split('/');
@@ -174,7 +98,6 @@ function FolderTree({ files, selectedFile, onSelect }: {
     if (!tree[folder]) tree[folder] = [];
     tree[folder].push(f);
   });
-
   const toggleFolder = (folder: string) => {
     setOpenFolders(prev => {
       const next = new Set(prev);
@@ -182,13 +105,11 @@ function FolderTree({ files, selectedFile, onSelect }: {
       return next;
     });
   };
-
   const extIcon = (filename: string) => {
     const ext = filename.split('.').pop()?.toLowerCase() || '';
     const map: Record<string, string> = { py: '🐍', js: '🟨', ts: '🔷', jsx: '⚛️', tsx: '⚛️', java: '☕', go: '🐹', rs: '🦀', css: '🎨', html: '🌐', json: '📋', md: '📝' };
     return map[ext] || '📄';
   };
-
   return (
     <div className="folder-tree">
       {Object.entries(tree).sort(([a], [b]) => a === 'root' ? -1 : a.localeCompare(b)).map(([folder, folderFiles]) => (
@@ -217,6 +138,150 @@ function FolderTree({ files, selectedFile, onSelect }: {
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+// Progress steps shown during indexing
+const INGEST_STEPS = [
+  'Fetching file tree from GitHub...',
+  'Filtering and downloading files...',
+  'Chunking code into segments...',
+  'Generating embeddings...',
+  'Building vector index...',
+  'Finalizing session...',
+];
+
+function IngestProgress({ startTime }: { startTime: number }) {
+  const [step, setStep] = useState(0);
+  const [pct, setPct] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    // Simulate realistic progress: fast at start, slows near end
+    const schedule = [
+      { at: 800,  pct: 12, step: 0 },
+      { at: 2000, pct: 28, step: 1 },
+      { at: 4000, pct: 45, step: 2 },
+      { at: 7000, pct: 62, step: 3 },
+      { at: 11000,pct: 78, step: 4 },
+      { at: 16000,pct: 90, step: 5 },
+    ];
+    const timers = schedule.map(({ at, pct: p, step: s }) =>
+      setTimeout(() => { setPct(p); setStep(s); }, at)
+    );
+    const ticker = setInterval(() => setElapsed(Math.floor((Date.now() - startTime) / 1000)), 500);
+    return () => { timers.forEach(clearTimeout); clearInterval(ticker); };
+  }, [startTime]);
+
+  const estTotal = 25; // seconds estimate
+  const remaining = Math.max(0, estTotal - elapsed);
+
+  return (
+    <div className="ingest-progress">
+      <div className="ip-header">
+        <span className="ip-step-label"><Spinner /> {INGEST_STEPS[step]}</span>
+        <span className="ip-pct">{pct}%</span>
+      </div>
+      <div className="ip-bar-track">
+        <div className="ip-bar-fill" style={{ width: `${pct}%` }} />
+      </div>
+      <div className="ip-footer">
+        <span className="ip-elapsed">⏱ {elapsed}s elapsed</span>
+        <span className="ip-remain">{remaining > 0 ? `~${remaining}s remaining` : 'Almost done...'}</span>
+      </div>
+      <div className="ip-steps">
+        {INGEST_STEPS.map((s, i) => (
+          <div key={i} className={`ip-step-dot ${i < step ? 'done' : i === step ? 'active' : ''}`}>
+            <span className="ip-dot">{i < step ? '✓' : i === step ? '●' : '○'}</span>
+            <span className="ip-step-name">{s.replace('...', '')}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function IngestionPanel({
+  sessionId, onIndexed, apiOk,
+}: {
+  sessionId: string;
+  apiOk: boolean | null;
+  onIndexed: (n: number, files: IndexedFile[], repoInfo?: {owner:string,repo:string,branch:string}) => void;
+}) {
+  const [tab, setTab] = useState<'gh' | 'up'>('gh');
+  const [url, setUrl] = useState('');
+  const [token, setToken] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [startTime, setStartTime] = useState(0);
+  const [res, setRes] = useState<any>(null);
+  const [err, setErr] = useState('');
+
+  const doGithub = async () => {
+    if (!url.trim() || apiOk !== true) return;
+    setLoading(true); setErr(''); setRes(null);
+    setStartTime(Date.now());
+    try {
+      const r = await ingestGithub(url.trim(), sessionId, token || undefined);
+      setRes(r.data);
+      onIndexed(r.data.indexed_files, r.data.files || [], {
+        owner: url.trim().replace(/\/+$/, '').split('/').slice(-2)[0],
+        repo:  url.trim().replace(/\/+$/, '').split('/').slice(-1)[0],
+        branch: r.data.branch || 'main',
+      });
+    } catch (e: any) { setErr(e.response?.data?.detail || e.message); }
+    finally { setLoading(false); }
+  };
+
+  const doUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    setLoading(true); setErr(''); setRes(null);
+    setStartTime(Date.now());
+    try {
+      const data = await Promise.all(files.map(async f => ({ filename: f.name, content: await f.text() })));
+      const r = await ingestFiles(data, sessionId);
+      setRes(r.data);
+      onIndexed(r.data.indexed_files, r.data.files || []);
+    } catch (e: any) { setErr(e.response?.data?.detail || e.message); }
+    finally { setLoading(false); }
+  };
+
+  const isApiReady = apiOk === true;
+
+  return (
+    <div className="ingest">
+      <div className="ingest-tabs">
+        <button className={`itab ${tab === 'gh' ? 'active' : ''}`} onClick={() => setTab('gh')}><Github size={13} /> GitHub</button>
+        <button className={`itab ${tab === 'up' ? 'active' : ''}`} onClick={() => setTab('up')}><Upload size={13} /> Upload</button>
+      </div>
+      {tab === 'gh' && (
+        <div className="ingest-row">
+          <input className="inp" placeholder="https://github.com/owner/repo" value={url} onChange={e => setUrl(e.target.value)} onKeyDown={e => e.key === 'Enter' && isApiReady && !loading && doGithub()} disabled={loading} />
+          <input className="inp" type="password" placeholder="GitHub Token (optional)" value={token} onChange={e => setToken(e.target.value)} disabled={loading} />
+          <button
+            className={`btn-pri ${!isApiReady ? 'btn-disabled' : ''}`}
+            onClick={doGithub}
+            disabled={loading || !url || !isApiReady}
+            title={!isApiReady ? (apiOk === false ? 'API is offline' : 'Waiting for API to connect...') : ''}
+          >
+            {loading ? <Spinner /> : <GitBranch size={14} />}
+            {loading ? 'Indexing...' : !isApiReady ? (apiOk === null ? 'Connecting...' : 'API Offline') : 'Index Repo'}
+          </button>
+        </div>
+      )}
+      {tab === 'up' && (
+        <label className={`upload-zone ${!isApiReady ? 'upload-disabled' : ''}`}>
+          <input type="file" multiple accept=".py,.js,.ts,.jsx,.tsx,.java,.go,.rs,.cpp,.c,.md,.txt,.json" onChange={isApiReady ? doUpload : undefined} hidden disabled={!isApiReady} />
+          {!isApiReady
+            ? <><Spinner /> <span>{apiOk === null ? 'Waiting for API...' : 'API Offline'}</span></>
+            : <><Upload size={22} /> <span>Click to upload code files</span></>
+          }
+        </label>
+      )}
+      {loading && <IngestProgress startTime={startTime} />}
+      {err && <div className="err-row"><XCircle size={13} /> {err}</div>}
+      {res && !loading && <div className="ok-row"><CheckCircle2 size={13} /> Indexed <b>{res.indexed_files}</b> files{res.repo ? ` from ${res.repo}` : ''}</div>}
     </div>
   );
 }
@@ -816,7 +881,7 @@ export default function App() {
             {tab === 'chat' && <><MessageSquare size={18} /> Code Chat</>}
           </div>
           {sessionId && (
-            <IngestionPanel sessionId={sessionId} onIndexed={handleIndexed} />
+            <IngestionPanel sessionId={sessionId} apiOk={apiOk} onIndexed={handleIndexed} />
           )}
         </div>
         <div className="main-body">
