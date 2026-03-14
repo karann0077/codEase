@@ -41,8 +41,19 @@ function MermaidDiagram({ chart }: { chart: string }) {
     if (!ref.current || !chart) return;
     const id = `mermaid-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     mermaid.render(id, chart)
-      .then(({ svg }) => { if (ref.current) ref.current.innerHTML = svg; })
-      .catch(() => { if (ref.current) ref.current.innerHTML = `<pre style="color:#aaa;font-size:12px;padding:12px">${chart}</pre>`; });
+      .then(({ svg }) => {
+        if (ref.current) ref.current.innerHTML = svg;
+      })
+      .catch(() => {
+        // On error: show raw source as readable code, no bomb icon
+        if (ref.current) {
+          ref.current.innerHTML = `
+            <div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px">
+              <div style="color:#8b9ab8;font-size:11px;margin-bottom:6px">⚠ Diagram preview unavailable — raw source:</div>
+              <pre style="color:#79c0ff;font-size:12px;margin:0;overflow:auto;white-space:pre-wrap">${chart.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>
+            </div>`;
+        }
+      });
   }, [chart]);
   return <div ref={ref} className="mermaid-wrap" />;
 }
@@ -64,15 +75,52 @@ function Collapsible({ title, children, defaultOpen = false, icon }: any) {
 function sanitizeMermaid(chart: string): string {
   if (!chart) return '';
   let c = chart.trim();
-  c = c.replace(/^```mermaid\s*/i, '').replace(/```\s*$/, '').trim();
+
+  // Strip any markdown fences (```mermaid, ```graph, etc.)
+  c = c.replace(/^```[\w]*\s*/i, '').replace(/```\s*$/, '').trim();
+
+  // Detect diagram type
+  const isSequence = /^sequenceDiagram/i.test(c);
+  const isFlowchart = /^(flowchart|graph)/i.test(c);
+
+  // Add default type if missing
   if (!c.match(/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|gitGraph)/i)) {
     c = 'flowchart TD\n' + c;
   }
-  c = c.replace(/\[([^\]]*)\(([^\)]*)\)([^\]]*)\]/g, '[$1$2$3]');
-  c = c.replace(/\[([^\]]+)\]/g, (_match, inner) => {
-    const clean = inner.replace(/[<>{}]/g, '').replace(/\s+/g, ' ').trim();
-    return `[${clean}]`;
-  });
+
+  if (isSequence) {
+    // sequenceDiagram: only fix single-line collapse, leave arrows alone (>> is valid syntax)
+    const lineCount = c.split('\n').filter((l: string) => l.trim()).length;
+    if (lineCount <= 2) {
+      // Split on sequence arrow types: ->>, -->>, ->, -->, -x, --x
+      c = c.replace(/\s*(->>|-->>|->|-->|-x|--x)\s*/g, ' $1\n    ');
+      c = c.replace(/(sequenceDiagram)\s+/, '$1\n');
+    }
+    // Fix quoted labels: remove outer quotes that break sequence parser
+    c = c.replace(/as "(.*?)"/g, 'as $1');
+    return c;
+  }
+
+  if (isFlowchart) {
+    // Flowchart: fix single-line, clean labels
+    const lineCount = c.split('\n').filter((l: string) => l.trim()).length;
+    if (lineCount <= 2) {
+      c = c.replace(/(flowchart\s+\w+|graph\s+\w+)/i, '$1\n');
+      c = c.replace(/\s*(-->|---|-.->|==>|-\.-?>)\s*/g, ' $1\n  ');
+      c = c.replace(/\n{2,}/g, '\n');
+    }
+    // Remove parentheses inside [] labels — Mermaid treats () as subgraph call
+    c = c.replace(/\[([^\]]*)\(([^\)]*)\)([^\]]*)\]/g, '[$1 $2 $3]');
+    // Strip chars that break flowchart node label parsing (but NOT sequence arrows)
+    c = c.replace(/\[([^\]]+)\]/g, (_m: string, inner: string) => {
+      const clean = inner.replace(/[<>{}"|]/g, '').replace(/\s+/g, ' ').trim();
+      return '[' + clean + ']';
+    });
+  }
+
+  // Fix typographic em/en dashes used as arrow dashes
+  c = c.replace(/\u2014>/g, '-->').replace(/\u2013>/g, '-->');
+
   return c;
 }
 
@@ -806,9 +854,14 @@ function ChatPage({ sessionId, indexedCount }: { sessionId: string; indexedCount
                   remarkPlugins={[remarkGfm]}
                   components={{
                     code({ node, className, children, ...props }: any) {
-                      const lang = (className || '').replace('language-', '');
-                      const code = String(children).replace(/\n$/, '');
-                      if (lang === 'mermaid') return <MermaidDiagram chart={code} />;
+                      const lang = (className || '').replace('language-', '').toLowerCase();
+                      const code = String(children).replace(/\n$/, '').trim();
+                      // Render as Mermaid if: lang is mermaid/graph/flowchart/sequence,
+                      // OR code body starts with a known diagram keyword
+                      const MERMAID_LANGS = ['mermaid','graph','flowchart','sequencediagram','sequencediagram','classdiagram','statediagram','erdiagram','gantt','pie','gitgraph'];
+                      const MERMAID_STARTS = /^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|gitGraph)/i;
+                      const isMermaid = MERMAID_LANGS.includes(lang) || (!lang && MERMAID_STARTS.test(code));
+                      if (isMermaid) return <MermaidDiagram chart={sanitizeMermaid(code)} />;
                       return <code className={className} {...props}>{children}</code>;
                     }
                   }}
@@ -849,7 +902,25 @@ export default function App() {
 
   useEffect(() => {
     createSession().then(r => setSessionId(r.data.session_id)).catch(() => setSessionId('local-' + Date.now()));
-    checkHealth().then(() => setApiOk(true)).catch(() => setApiOk(false));
+    // Retry health check every 5s until connected — Render cold-start can take 30-60s
+    let cancelled = false;
+    const tryConnect = async (attempt: number) => {
+      try {
+        await checkHealth();
+        if (!cancelled) setApiOk(true);
+      } catch {
+        if (!cancelled) {
+          // Keep retrying silently for up to 2 minutes (24 attempts × 5s)
+          if (attempt < 24) {
+            setTimeout(() => tryConnect(attempt + 1), 5000);
+          } else {
+            setApiOk(false); // Only mark offline after 2 min of retrying
+          }
+        }
+      }
+    };
+    tryConnect(0);
+    return () => { cancelled = true; };
   }, []);
 
   const handleIndexed = (n: number, files: IndexedFile[], repoInfo?: {owner:string,repo:string,branch:string}) => {
@@ -873,7 +944,7 @@ export default function App() {
         </nav>
         <div className="sidebar-foot">
           <div className={`api-dot ${apiOk === true ? 'ok' : apiOk === false ? 'err' : ''}`} />
-          <span>{apiOk === true ? 'API Connected' : apiOk === false ? 'API Offline' : 'Connecting...'}</span>
+          <span>{apiOk === true ? 'API Connected' : apiOk === false ? 'API Unreachable' : 'Server waking up...'}</span>
         </div>
       </aside>
 
@@ -894,8 +965,8 @@ export default function App() {
                 {indexedCount > 0
                   ? <span className="ingest-toggle-label">{indexedCount} files indexed</span>
                   : <span className="ingest-toggle-label">Index Repo</span>}
-                {apiOk === null && <span className="ingest-toggle-api-badge connecting">Connecting...</span>}
-                {apiOk === false && <span className="ingest-toggle-api-badge offline">Offline</span>}
+                {apiOk === null && <span className="ingest-toggle-api-badge connecting">Waking up...</span>}
+                {apiOk === false && <span className="ingest-toggle-api-badge offline">Unreachable</span>}
                 <ChevronDown size={12} className="ingest-chevron" />
               </button>
           </div>
@@ -905,8 +976,8 @@ export default function App() {
               {apiOk !== true && (
                 <div className={`api-wait-banner ${apiOk === false ? 'err' : ''}`}>
                   {apiOk === null
-                    ? <><Spinner /> <span>Connecting to API — this takes 20–30s on first load. You can type your repo URL while waiting.</span></>
-                    : <><XCircle size={13} /> <span>API is offline. Please refresh the page or try again.</span></>
+                    ? <><Spinner /> <span><b>Backend is waking up</b> — our server (Render free tier) takes 20–30s to start after being idle. Retrying automatically. You can type your repo URL now and click Index Repo once connected.</span></>
+                    : <><XCircle size={13} /> <span><b>Could not reach the backend</b> after 2 minutes. Please refresh the page to try again.</span></>
                   }
                 </div>
               )}
